@@ -1,0 +1,1264 @@
+// src/lib/mrindia.tsx Ã¢â‚¬â€ shared config, store list, and cart/auth context.
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
+import React, { createContext, useContext, useEffect, useState } from "react";
+
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
+import { encode as base64Encode } from "base-64";
+
+// Point at your backend. For a phone on the same Wi-Fi, use your Mac's LAN IP
+//Office ip
+export const API_BASE = "http://192.168.100.205:8067";
+const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
+
+// Pricing rules (all in MUR)
+export const SHIPPING = {
+  express: {
+    id: "express",
+    label: "Express",
+    perProduct: 400,
+    eta: "~7 days after items reach our warehouse",
+  },
+  standard: {
+    id: "standard",
+    label: "Standard",
+    perProduct: 300,
+    eta: "~2 weeks after items reach our warehouse",
+  },
+};
+
+// Shared pricing, weight, and currency constants.
+export const VERIFY_FEE = 200; // MUR per product, optional
+export const MAX_WEIGHT_KG = 1; // per product
+export const CURRENCY = "MUR";
+
+// Format a numeric value as a rounded Mauritian rupee amount.
+export function money(n: number) {
+  return (
+    "MUR " +
+    Number(n || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
+}
+
+// Color palette used when the device is in light mode.
+export const LIGHT_COLORS = {
+  bg: "#EEF3F4",
+  bg2: "#FFF9F0",
+  card: "#FFFDF8",
+  card2: "#F7EFE3",
+  border: "#E7D8C8",
+
+  amber: "#F56A00",
+  amber2: "#FFC48A",
+  gold: "#C99A45",
+  teal: "#3F96AA",
+  green: "#0A4152",
+  rose: "#B55A4B",
+
+  t1: "#2E211C",
+  t2: "#5A4038",
+  t3: "#71828B",
+
+  hero1: "#FFF9F0",
+  hero2: "#EEF3F4",
+};
+
+// Color palette used when the device is in dark mode.
+export const DARK_COLORS = {
+  // Main backgrounds
+  bg: "#131F2A", // crow feather / navy black
+  bg2: "#1E2E3A", // deepsea core
+  card: "#263E4C", // payneÃ¢â‚¬â„¢s gray
+  card2: "#2E404E", // deep blue-gray
+  border: "#4A5D68",
+
+  // Brand accents
+  amber: "#FF7A05", // harvest orange
+  amber2: "#FFB36B", // warm peach-orange
+  gold: "#E9D09A", // champagne
+  teal: "#7AACBF", // sky reflection blue
+  green: "#0A4152", // midnight green
+  rose: "#9B4A1F", // saddle/ruddy brown
+
+  // Text
+  t1: "#F9F3E7", // pearl text
+  t2: "#C8B8A5", // warm muted text
+  t3: "#8FA4B2", // muted blue-gray
+
+  // Hero gradient
+  hero1: "#1E2E3A",
+  hero2: "#131F2A",
+};
+
+// Return the correct application palette for the active color scheme.
+export function getColors(isDark: boolean) {
+  return isDark ? DARK_COLORS : LIGHT_COLORS;
+}
+
+// fallback so older screens still work
+export const COLORS = LIGHT_COLORS;
+
+// Brand gradient used across hero, buttons, highlights
+export const GRAD = ["#FF9E2C", "#FF5E3A"] as const;
+
+// Defines the information required to display and open a supported store.
+export type Store = {
+  id: string;
+  name: string;
+  emoji: string;
+  logo?: any;
+  url: string;
+  preferred?: boolean;
+  cat: string;
+  colors: readonly [string, string];
+  tagline: string;
+};
+
+// Supported Indian stores displayed on the application's home screen.
+export const STORES: Store[] = [
+  {
+    id: "amazon",
+    name: "Amazon India",
+    emoji: "Ã°Å¸â€ºâ€™",
+    logo: require("../../assets/images/logos/amazon.png"),
+    url: "https://www.amazon.in",
+    preferred: true,
+    cat: "Electronics",
+    colors: ["#FF9900", "#C7770A"],
+    tagline: "Everything store",
+  },
+
+  {
+    id: "flipkart",
+    name: "Flipkart",
+    emoji: "Ã°Å¸â€ºÂ",
+    logo: require("../../assets/images/logos/flipkart.png"),
+    url: "https://www.flipkart.com",
+    preferred: true,
+    cat: "Electronics",
+    colors: ["#2874F0", "#1B4FA8"],
+    tagline: "India's big bazaar",
+  },
+  {
+    id: "myntra",
+    name: "Myntra",
+    emoji: "Ã°Å¸â€˜â€”",
+    logo: require("../../assets/images/logos/myntra.png"),
+    url: "https://www.myntra.com",
+    cat: "Fashion",
+    colors: ["#FF3F6C", "#C72C53"],
+    tagline: "Fashion & style",
+  },
+  {
+    id: "ajio",
+    name: "AJIO",
+    emoji: "Ã¢Å“Â¨",
+    logo: require("../../assets/images/logos/aijo.png"),
+    url: "https://www.ajio.com/shop/men",
+    cat: "Fashion",
+    colors: ["#2D2A4A", "#5A3E85"],
+    tagline: "Trend-forward looks",
+  },
+
+  {
+    id: "nykaa",
+    name: "Nykaa",
+    emoji: "Ã°Å¸â€™â€ž",
+    logo: require("../../assets/images/logos/nykaa.png"),
+    url: "https://www.nykaa.com",
+    cat: "Beauty",
+    colors: ["#FC2779", "#B81E5B"],
+    tagline: "Beauty & cosmetics",
+  },
+  {
+    id: "meesho",
+    name: "Meesho",
+    emoji: "Ã°Å¸ÂÂ·",
+    logo: require("../../assets/images/logos/meesho.png"),
+    url: "https://www.meesho.com/",
+    cat: "Fashion",
+    colors: ["#9B1C8E", "#6E1465"],
+    tagline: "Value finds",
+  },
+  // {
+  //   id: "boat",
+  //   name: "boAt",
+  //   emoji: "Ã°Å¸Å½Â§",
+  //   logo: require("../../assets/images/logos/boAt.png"),
+  //   url: "https://www.boat-lifestyle.com",
+  //   cat: "Electronics",
+  //   colors: ["#1A1A1A", "#444"],
+  //   tagline: "Audio lifestyle",
+  // },
+  // {
+  //   id: "jockey",
+  //   name: "Jockey",
+  //   emoji: "Ã°Å¸â€˜â€¢",
+  //   logo: require("../../assets/images/logos/jockey.png"),
+  //   url: "https://www.jockey.in",
+  //   cat: "Fashion",
+  //   colors: ["#0A3D62", "#0A6CA8"],
+  //   tagline: "Comfort wear",
+  // },
+  {
+    id: "firstcry",
+    name: "FirstCry",
+    emoji: "Ã°Å¸Â§Â¸",
+    logo: require("../../assets/images/logos/firstcry.png"),
+    url: "https://www.firstcry.com",
+    cat: "Beauty",
+    colors: ["#F47B20", "#C75E12"],
+    tagline: "Kids & baby",
+  },
+  {
+    id: "ikea",
+    name: "IKEA",
+    emoji: "Ã°Å¸â€ºâ€¹",
+    logo: require("../../assets/images/logos/ikea.png"),
+    url: "https://www.ikea.com/in/en/",
+    cat: "Electronics",
+    colors: ["#0058A3", "#FBD914"],
+    tagline: "Home & living",
+  },
+];
+
+export type CartItem = {
+  id: string;
+  name: string;
+
+  // Original store price. Never converted by the mobile app.
+  sourcePrice: number;
+  sourceCurrency: string;
+
+  // Odoo-converted display amount.
+  displayPrice?: number;
+  displayCurrency?: string;
+
+  store: string;
+  link?: string;
+  image?: string;
+  options?: string;
+  size?: string;
+  color?: string;
+  notes?: string;
+  qty?: number;
+  e?: string;
+  verify?: boolean;
+};
+
+// Defines all data and actions made available through the shared context.
+type Ctx = {
+  cart: CartItem[];
+  addToCart: (i: CartItem) => void;
+  removeFromCart: (id: string) => void;
+  toggleVerify: (id: string) => void;
+  setQty: (id: string, qty: number) => void;
+  clearCart: () => void;
+  cartCount: number;
+  itemsTotal: number;
+  user: any;
+  token: string | null;
+
+  authReady: boolean;
+  signIn: (u: any, t: string) => void;
+  signOut: () => void;
+};
+
+// Create the shared cart and authentication context.
+const C = createContext<Ctx | null>(null);
+
+// Provide access to the shared context from application screens.
+export const useStore = () => {
+  const ctx = useContext(C);
+
+  // Return safe fallback values if a component is outside StoreProvider.
+  if (!ctx) {
+    return {
+      cart: [],
+      addToCart: () => {},
+      removeFromCart: () => {},
+      toggleVerify: () => {},
+      setQty: () => {},
+      clearCart: () => {},
+      cartCount: 0,
+      itemsTotal: 0,
+      user: null,
+      token: null,
+
+      authReady: false,
+      signIn: () => {},
+      signOut: () => {},
+    } as Ctx;
+  }
+
+  return ctx;
+};
+
+// Own the shared cart, user, and authentication state.
+export function StoreProvider({ children }: { children: React.ReactNode }) {
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [user, setUser] = useState<any>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        console.log("========== RESTORE APP SESSION ==========");
+
+        // Restore cart
+        const c = await AsyncStorage.getItem("mi_cart");
+
+        if (c) {
+          setCart(JSON.parse(c));
+        }
+
+        // Read saved application session
+        const t = await AsyncStorage.getItem("mi_token");
+        const u = await AsyncStorage.getItem("mi_user");
+
+        if (!u) {
+          console.log("No saved user session");
+          return;
+        }
+
+        /*
+         * IMPORTANT:
+         * Restore Mobikul credentials BEFORE restoring the React user.
+         *
+         * account.tsx watches `user`. As soon as user becomes non-null,
+         * it calls api.myAccount().
+         */
+        const credentialsRestored = await restoreMobikulCredentials();
+
+        if (!credentialsRestored) {
+          console.log(
+            "Saved user exists but Mobikul authentication could not be restored",
+          );
+
+          await AsyncStorage.removeItem("mi_user");
+          await AsyncStorage.removeItem("mi_token");
+
+          setUser(null);
+          setToken(null);
+
+          return;
+        }
+
+        // Mobikul is ready. Now React may consider the user signed in.
+        if (t) {
+          setToken(t);
+        }
+
+        setUser(JSON.parse(u));
+
+        console.log("Application authentication restored successfully");
+      } catch (error) {
+        console.log("SESSION RESTORE ERROR:", error);
+
+        setUser(null);
+        setToken(null);
+      } finally {
+        setAuthReady(true);
+      }
+    })();
+  }, []);
+
+  // Persist every cart change to local device storage.
+  useEffect(() => {
+    AsyncStorage.setItem("mi_cart", JSON.stringify(cart));
+  }, [cart]);
+
+  // Add a new product or increase the quantity of an existing product.
+  const addToCart = (item: CartItem) =>
+    setCart((prev) => {
+      const normalizedLink = String(item.link || "")
+        .trim()
+        .toLowerCase();
+
+      const normalizedOptions = String(item.options || "")
+        .trim()
+        .toLowerCase();
+
+      const existing = prev.find((p) => {
+        const sameId = !!item.id && p.id === item.id;
+
+        const sameBrowserProduct =
+          !!normalizedLink &&
+          String(p.link || "")
+            .trim()
+            .toLowerCase() === normalizedLink &&
+          String(p.options || "")
+            .trim()
+            .toLowerCase() === normalizedOptions;
+
+        return sameId || sameBrowserProduct;
+      });
+
+      if (existing) {
+        return prev.map((p) =>
+          p.id === existing.id ? { ...p, qty: (p.qty || 1) + 1 } : p,
+        );
+      }
+
+      const id = item.id || "m" + Date.now();
+
+      return [...prev, { qty: 1, ...item, id }];
+    });
+
+  // Remove one product from the cart using its identifier.
+  const removeFromCart = (id: string) =>
+    setCart((p) => p.filter((x) => x.id !== id));
+
+  // Enable or disable optional verification for a cart product.
+  const toggleVerify = (id: string) =>
+    setCart((p) =>
+      p.map((x) => (x.id === id ? { ...x, verify: !x.verify } : x)),
+    );
+
+  // Update a product quantity while enforcing a minimum value of one.
+  const setQty = (id: string, qty: number) =>
+    setCart((p) =>
+      p.map((x) => (x.id === id ? { ...x, qty: Math.max(1, qty) } : x)),
+    );
+
+  // Remove every product from the cart.
+  const clearCart = () => setCart([]);
+
+  // Store the authenticated user and access token in memory and local storage.
+  const signIn = async (u: any, t: string) => {
+    setUser(u);
+    setToken(t);
+    await AsyncStorage.setItem("mi_user", JSON.stringify(u));
+    await AsyncStorage.setItem("mi_token", t);
+  };
+
+  const signOut = async () => {
+    console.log("========== SIGN OUT ==========");
+
+    setUser(null);
+    setToken(null);
+
+    await AsyncStorage.removeItem("mi_user");
+    await AsyncStorage.removeItem("mi_token");
+
+    await clearMobikulCredentials();
+
+    try {
+      await GoogleSignin.signOut();
+      console.log("Google account signed out");
+    } catch (error) {
+      console.log("Google sign-out skipped:", error);
+    }
+
+    console.log("User signed out completely");
+
+    router.replace("/signin");
+  };
+
+  // Calculate the total number of product units in the cart.
+  const cartCount = cart.reduce((s, i) => s + (i.qty || 1), 0);
+
+  const itemsTotal = cart.reduce(
+    (s, i) => s + (i.displayPrice || 0) * (i.qty || 1),
+    0,
+  );
+
+  // Make the shared data and actions available to child components.
+  return (
+    <C.Provider
+      value={{
+        cart,
+        addToCart,
+        removeFromCart,
+        toggleVerify,
+        setQty,
+        clearCart,
+        cartCount,
+        itemsTotal,
+        user,
+        token,
+
+        authReady,
+        signIn,
+        signOut,
+      }}
+    >
+      {children}
+    </C.Provider>
+  );
+}
+
+const MOBIKUL_API_KEY = "dummySecretKey";
+
+function encodeBasicAuth(apiKey: string) {
+  return base64Encode(`${apiKey}:`);
+}
+
+let odooSessionReady = false;
+
+async function ensureOdooSession() {
+  if (odooSessionReady) {
+    return;
+  }
+
+  console.log("Selecting Odoo database:", ODOO_DB);
+
+  const url = `${API_BASE}/web?db=${encodeURIComponent(ODOO_DB)}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  console.log("Odoo session status:", response.status);
+
+  if (!response.ok) {
+    throw new Error(
+      `Could not initialise Odoo database session. HTTP ${response.status}`,
+    );
+  }
+
+  odooSessionReady = true;
+
+  console.log("Odoo database session ready");
+}
+
+type MobikulPasswordCredentials = {
+  type: "password";
+  login: string;
+  password: string;
+};
+
+type MobikulSocialCredentials = {
+  type: "social";
+  authProvider: string;
+  authUserId: string;
+};
+
+type MobikulOtpCredentials = {
+  type: "otp";
+  login: string;
+};
+
+type MobikulCredentials =
+  | MobikulPasswordCredentials
+  | MobikulSocialCredentials
+  | MobikulOtpCredentials;
+
+let activeMobikulCredentials: MobikulCredentials | null = null;
+
+export async function saveMobikulCredentials(login: string, password: string) {
+  const credentials: MobikulPasswordCredentials = {
+    type: "password",
+    login,
+    password,
+  };
+
+  activeMobikulCredentials = credentials;
+
+  await AsyncStorage.setItem(
+    "mi_mobikul_credentials",
+    JSON.stringify(credentials),
+  );
+
+  console.log("Mobikul password credentials saved for:", login);
+}
+
+export async function saveMobikulSocialCredentials(
+  authProvider: string,
+  authUserId: string,
+) {
+  const credentials: MobikulSocialCredentials = {
+    type: "social",
+    authProvider,
+    authUserId,
+  };
+
+  activeMobikulCredentials = credentials;
+
+  await AsyncStorage.setItem(
+    "mi_mobikul_credentials",
+    JSON.stringify(credentials),
+  );
+
+  console.log("Mobikul social credentials saved:", authProvider, authUserId);
+}
+export async function saveMobikulOtpCredentials(login: string) {
+  const credentials: MobikulOtpCredentials = {
+    type: "otp",
+    login,
+  };
+
+  activeMobikulCredentials = credentials;
+
+  await AsyncStorage.setItem(
+    "mi_mobikul_credentials",
+    JSON.stringify(credentials),
+  );
+
+  console.log("Mobikul OTP credentials saved for:", login);
+}
+
+export async function restoreMobikulCredentials() {
+  try {
+    const saved = await AsyncStorage.getItem("mi_mobikul_credentials");
+
+    if (!saved) {
+      activeMobikulCredentials = null;
+      console.log("No saved Mobikul credentials found");
+      return false;
+    }
+
+    const credentials = JSON.parse(saved);
+
+    // Restore normal email/password authentication.
+    if (
+      credentials?.type === "password" &&
+      credentials?.login &&
+      credentials?.password
+    ) {
+      activeMobikulCredentials = credentials;
+
+      console.log(
+        "Mobikul password credentials restored for:",
+        credentials.login,
+      );
+
+      return true;
+    }
+
+    // Restore Google / Apple social authentication.
+    if (
+      credentials?.type === "social" &&
+      credentials?.authProvider &&
+      credentials?.authUserId
+    ) {
+      activeMobikulCredentials = credentials;
+
+      console.log(
+        "Mobikul social credentials restored:",
+        credentials.authProvider,
+      );
+
+      return true;
+    }
+    // Restore OTP authentication.
+    if (credentials?.type === "otp" && credentials?.login) {
+      activeMobikulCredentials = credentials;
+
+      console.log("Mobikul OTP credentials restored for:", credentials.login);
+
+      return true;
+    }
+
+    // Compatibility with credentials saved by the older version of the app.
+    if (credentials?.login && credentials?.password) {
+      activeMobikulCredentials = {
+        type: "password",
+        login: credentials.login,
+        password: credentials.password,
+      };
+
+      console.log(
+        "Legacy Mobikul credentials restored for:",
+        credentials.login,
+      );
+
+      return true;
+    }
+
+    activeMobikulCredentials = null;
+
+    console.log("Saved Mobikul credentials are incomplete");
+
+    return false;
+  } catch (error) {
+    activeMobikulCredentials = null;
+
+    console.log("Failed to restore Mobikul credentials:", error);
+
+    return false;
+  }
+}
+
+export async function clearMobikulCredentials() {
+  activeMobikulCredentials = null;
+
+  await AsyncStorage.removeItem("mi_mobikul_credentials");
+
+  console.log("Mobikul credentials cleared");
+}
+
+async function mobikulReq(
+  path: string,
+  method: string = "POST",
+  body: Record<string, any> = {},
+  credentials?: MobikulCredentials,
+) {
+  // First make Odoo select the correct database and create its session cookie.
+  await ensureOdooSession();
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Basic ${encodeBasicAuth(MOBIKUL_API_KEY)}`,
+    "Content-Type": "text/plain",
+  };
+
+  const requestCredentials = credentials || activeMobikulCredentials;
+
+  if (requestCredentials?.type === "password") {
+    const loginPayload = {
+      login: requestCredentials.login,
+      pwd: requestCredentials.password,
+    };
+
+    headers["Login"] = base64Encode(JSON.stringify(loginPayload));
+
+    console.log("Mobikul Login header prepared for:", requestCredentials.login);
+  } else if (requestCredentials?.type === "social") {
+    const socialPayload = {
+      authProvider: requestCredentials.authProvider,
+      authUserId: requestCredentials.authUserId,
+    };
+
+    headers["SocialLogin"] = base64Encode(JSON.stringify(socialPayload));
+
+    console.log(
+      "Mobikul SocialLogin header prepared:",
+      requestCredentials.authProvider,
+    );
+  } else if (requestCredentials?.type === "otp") {
+    const otpPayload = {
+      login: requestCredentials.login,
+      pwd: "otp-session",
+    };
+
+    headers["Login"] = base64Encode(JSON.stringify(otpPayload));
+
+    console.log(
+      "Mobikul OTP Login header prepared for:",
+      requestCredentials.login,
+    );
+  } else {
+    console.log("WARNING: No Mobikul credentials available for:", path);
+  }
+
+  console.log("MOBIKUL REQUEST:", method, API_BASE + path);
+
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers,
+    credentials: "include",
+    body: method === "GET" ? undefined : JSON.stringify(body),
+  });
+
+  console.log("MOBIKUL HTTP STATUS:", res.status);
+
+  const text = await res.text();
+
+  console.log("MOBIKUL RAW RESPONSE:", text);
+
+  let data: any = {};
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Invalid response from server: ${text}`);
+  }
+
+  if (!res.ok || data?.success === false) {
+    throw data;
+  }
+
+  return data;
+}
+
+async function mobikulFormReq(path: string, body: Record<string, any> = {}) {
+  await ensureOdooSession();
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Basic ${encodeBasicAuth(MOBIKUL_API_KEY)}`,
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+
+  if (activeMobikulCredentials?.type === "password") {
+    const loginPayload = {
+      login: activeMobikulCredentials.login,
+      pwd: activeMobikulCredentials.password,
+    };
+
+    headers["Login"] = base64Encode(JSON.stringify(loginPayload));
+
+    console.log(
+      "Mobikul Login header prepared for:",
+      activeMobikulCredentials.login,
+    );
+  } else if (activeMobikulCredentials?.type === "social") {
+    const socialPayload = {
+      authProvider: activeMobikulCredentials.authProvider,
+      authUserId: activeMobikulCredentials.authUserId,
+    };
+
+    headers["SocialLogin"] = base64Encode(JSON.stringify(socialPayload));
+
+    console.log(
+      "Mobikul SocialLogin header prepared:",
+      activeMobikulCredentials.authProvider,
+    );
+  } else if (activeMobikulCredentials?.type === "otp") {
+    const otpPayload = {
+      login: activeMobikulCredentials.login,
+      pwd: "otp-session",
+    };
+
+    headers["Login"] = base64Encode(JSON.stringify(otpPayload));
+
+    console.log(
+      "Mobikul OTP Login header prepared for:",
+      activeMobikulCredentials.login,
+    );
+  } else {
+    console.log("WARNING: No Mobikul credentials available for:", path);
+  }
+
+  const formBody = Object.entries(body)
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(
+          value == null ? "" : String(value),
+        )}`,
+    )
+    .join("&");
+
+  console.log("MOBIKUL FORM REQUEST: POST", API_BASE + path);
+  console.log("MOBIKUL FORM BODY:", formBody);
+
+  const res = await fetch(API_BASE + path, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: formBody,
+  });
+
+  console.log("MOBIKUL HTTP STATUS:", res.status);
+
+  const text = await res.text();
+
+  console.log("MOBIKUL RAW RESPONSE:", text);
+
+  let data: any = {};
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Invalid response from server: ${text}`);
+  }
+
+  if (!res.ok || data?.success === false) {
+    throw data;
+  }
+
+  return data;
+}
+
+export const api = {
+  sendLoginOtp: async (email: string) => {
+    console.log("========== SEND LOGIN OTP ==========");
+
+    const result = await mobikulFormReq("/mobile/login/otp/send", {
+      email: email.trim().toLowerCase(),
+    });
+
+    console.log("SEND LOGIN OTP RESULT:", JSON.stringify(result, null, 2));
+
+    return result;
+  },
+  verifyLoginOtp: async (email: string, otp: string) => {
+    console.log("========== VERIFY LOGIN OTP ==========");
+
+    const result = await mobikulFormReq("/mobile/login/otp/verify", {
+      email: email.trim().toLowerCase(),
+      otp: otp.trim(),
+    });
+
+    console.log("VERIFY LOGIN OTP RESULT:", JSON.stringify(result, null, 2));
+
+    return result;
+  },
+
+  splash: () => mobikulReq("/mobikul/splashPageData", "POST", {}),
+
+  login: async (email: string, password: string) => {
+    console.log("========== LOGIN ==========");
+
+    const result = await mobikulReq(
+      "/mobikul/customer/login",
+      "POST",
+      {
+        login: email,
+        pwd: password,
+        password,
+      },
+      {
+        type: "password",
+        login: email,
+        password,
+      },
+    );
+
+    await saveMobikulCredentials(email, password);
+
+    return result;
+  },
+
+  googleLogin: async ({
+    name,
+    email,
+    googleUserId,
+    idToken,
+  }: {
+    name: string;
+    email: string;
+    googleUserId: string;
+    idToken: string;
+  }) => {
+    console.log("========== MOBIKUL GOOGLE AUTH ==========");
+
+    const socialCredentials: MobikulSocialCredentials = {
+      type: "social",
+      authProvider: "GMAIL",
+      authUserId: googleUserId,
+    };
+
+    console.log("Google social user:", {
+      name,
+      email,
+      googleUserId,
+      token: idToken ? "RECEIVED" : "MISSING",
+    });
+
+    const signupResult = await mobikulReq(
+      "/mobikul/customer/signUp",
+      "POST",
+      {
+        isSocialLogin: true,
+
+        authProvider: "GMAIL",
+        authUserId: googleUserId,
+        authToken: idToken,
+
+        name,
+        email,
+        login: email,
+
+        password: googleUserId,
+      },
+      socialCredentials,
+    );
+
+    console.log(
+      "GOOGLE MOBIKUL SIGNUP/LINK RESULT:",
+      JSON.stringify(signupResult, null, 2),
+    );
+
+    const loginResult = await mobikulReq(
+      "/mobikul/customer/login",
+      "POST",
+      {
+        login: email,
+      },
+      socialCredentials,
+    );
+
+    console.log(
+      "GOOGLE MOBIKUL LOGIN RESULT:",
+      JSON.stringify(loginResult, null, 2),
+    );
+
+    await saveMobikulSocialCredentials("GMAIL", googleUserId);
+
+    return loginResult;
+  },
+
+  appleLogin: async ({
+    name,
+    email,
+    appleUserId,
+    identityToken,
+  }: {
+    name?: string | null;
+    email?: string | null;
+    appleUserId: string;
+    identityToken: string;
+  }) => {
+    console.log("========== MOBIKUL APPLE AUTH ==========");
+
+    const socialCredentials: MobikulSocialCredentials = {
+      type: "social",
+      authProvider: "APPLEID",
+      authUserId: appleUserId,
+    };
+
+    console.log("Apple social user:", {
+      name: name || null,
+      email: email || null,
+      appleUserId,
+      token: identityToken ? "RECEIVED" : "MISSING",
+    });
+
+    /*
+     * Apple may only provide name/email on the first authorization.
+     * Therefore first try to authenticate by the stable Apple user ID.
+     */
+    try {
+      const existingLogin = await mobikulReq(
+        "/mobikul/customer/login",
+        "POST",
+        {},
+        socialCredentials,
+      );
+
+      console.log(
+        "APPLE EXISTING MOBIKUL LOGIN RESULT:",
+        JSON.stringify(existingLogin, null, 2),
+      );
+
+      await saveMobikulSocialCredentials("APPLEID", appleUserId);
+
+      return existingLogin;
+    } catch (loginError) {
+      console.log(
+        "Apple social account not linked yet. Attempting signup/link.",
+      );
+    }
+
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+
+    const normalizedName =
+      String(name || "").trim() ||
+      (normalizedEmail ? normalizedEmail.split("@")[0] : "");
+
+    if (!normalizedEmail) {
+      throw new Error(
+        "Apple did not provide your email address. This Apple account is not yet linked to Mr India.",
+      );
+    }
+
+    if (!normalizedName) {
+      throw new Error(
+        "Apple did not provide enough account information to create your Mr India account.",
+      );
+    }
+
+    const signupResult = await mobikulReq(
+      "/mobikul/customer/signUp",
+      "POST",
+      {
+        isSocialLogin: true,
+
+        authProvider: "APPLEID",
+        authUserId: appleUserId,
+        authToken: identityToken,
+
+        name: normalizedName,
+        email: normalizedEmail,
+        login: normalizedEmail,
+
+        password: appleUserId,
+      },
+      socialCredentials,
+    );
+
+    console.log(
+      "APPLE MOBIKUL SIGNUP/LINK RESULT:",
+      JSON.stringify(signupResult, null, 2),
+    );
+
+    const loginResult = await mobikulReq(
+      "/mobikul/customer/login",
+      "POST",
+      {},
+      socialCredentials,
+    );
+
+    console.log(
+      "APPLE MOBIKUL LOGIN RESULT:",
+      JSON.stringify(loginResult, null, 2),
+    );
+
+    await saveMobikulSocialCredentials("APPLEID", appleUserId);
+
+    return loginResult;
+  },
+  sendRegistrationOtp: (
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string,
+  ) =>
+    mobikulFormReq("/mobile/signup/otp/send", {
+      name,
+      email,
+      password,
+      confirm_password: confirmPassword,
+    }),
+
+  verifyRegistrationOtp: (
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string,
+    otp: string,
+  ) =>
+    mobikulFormReq("/mobile/signup/otp/verify", {
+      name,
+      email,
+      password,
+      confirm_password: confirmPassword,
+      otp,
+    }),
+  register: (name: string, email: string, password: string) =>
+    mobikulReq("/mobikul/customer/signUp", "POST", {
+      name,
+      login: email,
+      password,
+    }),
+
+  myAccount: () => mobikulReq("/mobikul/my/account", "POST", {}),
+
+  updateAccount: (payload: any) =>
+    mobikulFormReq("/mobikul/signup/details/update", payload),
+
+  myWallet: () => mobikulReq("/mobikul/my/mi/wallet", "POST", {}),
+
+  myOrders: () => mobikulReq("/mobikul/my/mi/orders", "POST", {}),
+
+  myMiOrder: (orderId: number) =>
+    mobikulReq(`/mobikul/my/mi/order/${orderId}`, "POST", {}),
+
+  miOrderList: () => mobikulReq("/mobikul/mi/order/list", "POST", {}),
+
+  getMiServicesPricing: () => mobikulReq("/mobikul/mi/services", "GET"),
+
+  convertCurrency: (
+    amount: number,
+    sourceCurrency: string,
+    targetCurrency: string,
+  ) =>
+    mobikulFormReq("/mobikul/mi/convert/currency", {
+      amount: String(amount),
+      source_currency: sourceCurrency,
+      target_currency: targetCurrency,
+    }),
+
+  applyPromoCode: (orderId: number, promoCode: string) =>
+    mobikulFormReq("/mobikul/apply_promo_code", {
+      order_id: String(orderId),
+      promo_code: promoCode.trim(),
+    }),
+
+  createMiOrder: async (payload: any) => {
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+
+    if (!items.length) {
+      throw new Error("Your cart is empty.");
+    }
+
+    let lastResponse: any = null;
+
+    // Keep the quotation returned by Odoo so following cart items
+
+    // are added to the same quotation.
+
+    let activeQuotationId = payload?.quotation_id
+      ? String(payload.quotation_id)
+      : "";
+    // for (const item of items) {
+    for (const [index, item] of items.entries()) {
+      if (!item?.link) {
+        throw new Error(
+          `Product "${item?.name || "Unknown"}" has no product URL.`,
+        );
+      }
+
+      const itemPayload = {
+        service: "Personal Shopping",
+        order_url: String(item.link),
+        item_name: String(item.name || "").trim(),
+        quantity: String(item.qty || 1),
+
+        price: String(item.sourcePrice || 0),
+        source_currency: String(item.sourceCurrency || "INR"),
+
+        verify: item.verify ? "1" : "",
+
+        ship_method: String(payload?.ship_method || "standard"),
+
+        payment_method: String(payload?.payment_method || ""),
+
+        quotation_id: activeQuotationId,
+
+        promo_code:
+          index === items.length - 1
+            ? String(payload?.promo_code || "").trim()
+            : "",
+
+        preview:
+          index < items.length - 1 ||
+          (index === items.length - 1 && payload?.preview)
+            ? "1"
+            : "",
+
+        start_checkout: index === 0 ? "1" : "",
+
+        finalize: index === items.length - 1 && !payload?.preview ? "1" : "",
+
+        use_wallet:
+          index === items.length - 1 && !payload?.preview && payload?.use_wallet
+            ? "1"
+            : "",
+
+        color: String(item.color || "").trim(),
+        size: String(item.size || "").trim(),
+        order_reference: "",
+        accessory_category: "",
+      };
+
+      console.log("========== MOBIKUL MI ITEM FORM PAYLOAD ==========");
+      console.log(JSON.stringify(itemPayload, null, 2));
+
+      lastResponse = await mobikulFormReq(
+        "/mobikul/create/mi/orders",
+        itemPayload,
+      );
+
+      console.log(
+        "MOBIKUL MI ITEM RESULT:",
+        JSON.stringify(lastResponse, null, 2),
+      );
+
+      if (!lastResponse?.success) {
+        throw lastResponse;
+      }
+
+      // Odoo returns the quotation/order ID after the first product.
+
+      // Reuse it for every remaining product in this checkout.
+
+      const returnedOrderId = Number(lastResponse?.data?.order_id || 0);
+
+      if (returnedOrderId > 0) {
+        activeQuotationId = String(returnedOrderId);
+      }
+    }
+
+    return lastResponse;
+  },
+};

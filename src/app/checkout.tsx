@@ -1,0 +1,1468 @@
+﻿// src/app/checkout.tsx - choose Express/Standard shipping (per product, MUR),
+// pay Mr India, and send everything (items, shipping, verification, payment) to
+// the backend so the team's CRM sees who bought what and whether payment cleared.
+
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useColorScheme,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { api, getColors, money, useStore } from "../lib/mrindia";
+
+// Payment methods available during checkout.
+const PAY = [
+  // { id: "card", label: "Credit / Debit Card", icon: "card-outline" },
+  { id: "mcb", label: "MCB Bank Transfer", icon: "business-outline" },
+  // { id: "paypal", label: "PayPal", icon: "logo-paypal" },
+  // { id: "apple", label: "Apple Pay", icon: "logo-apple" },
+];
+
+// Defines the structure of an address loaded from local storage.
+type SavedAddress = {
+  id: string;
+  label: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  postalCode: string;
+  country: string;
+  isDefaultDelivery: boolean;
+  isDefaultBilling: boolean;
+};
+
+export default function Checkout() {
+  // Provides navigation between the cart, addresses, and orders screens.
+  const router = useRouter();
+
+  // Create the active color palette and styles from the device color scheme.
+  const scheme = useColorScheme();
+  const COLORS = getColors(scheme === "dark");
+  const s = makeStyles(COLORS);
+
+  // Retrieve cart information, authentication, and cart actions.
+  const { cart, itemsTotal, clearCart, token, user } = useStore();
+
+  // Store the customer's delivery and contact information.
+  const [f, setF] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    addr: "",
+    city: "",
+    postalCode: "",
+    country: "Mauritius",
+  });
+
+  // Track the selected shipping and payment methods.
+  const [ship, setShip] = useState<"express" | "standard">("standard");
+  const [pay, setPay] = useState("mcb");
+
+  // Prevent repeated submissions while an order is being processed.
+  const [busy, setBusy] = useState(false);
+
+  const [promoCode, setPromoCode] = useState("");
+  const [promoApplying, setPromoApplying] = useState(false);
+  const [promoPreview, setPromoPreview] = useState<any>(null);
+  const [checkoutOrderId, setCheckoutOrderId] = useState<number | null>(null);
+
+  const [useWallet, setUseWallet] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [walletLoading, setWalletLoading] = useState(false);
+
+  // Track required fields that failed validation.
+  const [errors, setErrors] = useState<Record<string, boolean>>({});
+
+  // Update a form field and clear its error after valid text is entered.
+  const set = (k: string) => (v: string) => {
+    setF((p) => ({ ...p, [k]: v }));
+
+    if (v.trim()) {
+      setErrors((p) => ({ ...p, [k]: false }));
+    }
+  };
+
+  // Calculate the total number of product units.
+  const units = cart.reduce((sum, i) => sum + (i.qty || 1), 0);
+
+  const [odooPricing, setOdooPricing] = useState<any>(null);
+  const [pricingLoading, setPricingLoading] = useState(true);
+
+  const loadCheckoutWallet = useCallback(async () => {
+    if (!user) {
+      setWalletBalance(0);
+      setUseWallet(false);
+      return;
+    }
+
+    try {
+      setWalletLoading(true);
+
+      const result = await api.myWallet();
+
+      if (!result?.success) {
+        throw new Error(result?.message || "Could not load wallet.");
+      }
+
+      const balance = Number(result?.wallet?.balance || 0);
+      setWalletBalance(Number.isFinite(balance) ? balance : 0);
+    } catch (err) {
+      console.log("CHECKOUT WALLET ERROR:", err);
+      setWalletBalance(0);
+      setUseWallet(false);
+    } finally {
+      setWalletLoading(false);
+    }
+  }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCheckoutWallet();
+    }, [loadCheckoutWallet]),
+  );
+  const mcbPayment = odooPricing?.mcb_payment;
+  const mcbInstructions = String(mcbPayment?.pending_message || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|h1|h2|h3|h4|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const serviceFee = Number(odooPricing?.service_fee?.price || 0);
+
+  const verificationFee = Number(odooPricing?.verification_fee?.price || 0);
+
+  const standardShipping = Number(odooPricing?.standard_shipping?.price || 0);
+
+  const expressShipping = Number(odooPricing?.express_shipping?.price || 0);
+
+  const shippingTaxPercent =
+    ship === "express"
+      ? Number(odooPricing?.express_shipping?.tax_percent || 0)
+      : Number(odooPricing?.standard_shipping?.tax_percent || 0);
+
+  const totalUnits = cart.reduce((sum, item) => sum + (item.qty || 1), 0);
+
+  const shipTotal =
+    ship === "express"
+      ? expressShipping * totalUnits
+      : standardShipping * totalUnits;
+
+  const verifyTotal = cart.reduce(
+    (sum, i) => sum + (i.verify ? verificationFee * (i.qty || 1) : 0),
+    0,
+  );
+
+  // Store the address that was automatically selected for delivery.
+  const [savedAddress, setSavedAddress] = useState<SavedAddress | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      async function loadPricing() {
+        try {
+          setPricingLoading(true);
+
+          const result = await api.getMiServicesPricing();
+
+          console.log(
+            "CHECKOUT ODOO PRICING:",
+            JSON.stringify(result?.data, null, 2),
+          );
+
+          if (active) {
+            setOdooPricing(result?.data || null);
+          }
+        } catch (error) {
+          console.log("CHECKOUT PRICING ERROR:", error);
+
+          if (active) {
+            setOdooPricing(null);
+          }
+        } finally {
+          if (active) {
+            setPricingLoading(false);
+          }
+        }
+      }
+
+      loadPricing();
+
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  // Reload the customer's delivery address from Odoo whenever checkout receives focus.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      async function loadDefaultAddress() {
+        try {
+          if (!user) {
+            if (active) {
+              setSavedAddress(null);
+            }
+            return;
+          }
+
+          console.log("========== LOAD CHECKOUT ADDRESS ==========");
+
+          // Odoo is now the source of truth for the customer's address.
+          const account = await api.myAccount();
+
+          console.log(
+            "CHECKOUT ACCOUNT RESULT:",
+            JSON.stringify(account, null, 2),
+          );
+
+          if (!active) {
+            return;
+          }
+
+          if (!account?.success) {
+            console.log("Could not load checkout address from Odoo");
+            setSavedAddress(null);
+            return;
+          }
+
+          // Mobikul returns account fields as objects such as:
+
+          const fieldValue = (field: any) => {
+            if (field && typeof field === "object" && "value" in field) {
+              return field.value ?? "";
+            }
+
+            return field ?? "";
+          };
+
+          const name = String(fieldValue(account.name) || "");
+          const email = String(fieldValue(account.email) || "");
+          const phone = String(fieldValue(account.phone) || "");
+          const street = String(fieldValue(account.street) || "");
+          const street2 = String(fieldValue(account.street2) || "").trim();
+          const city = String(fieldValue(account.city) || "");
+          const postalCode = String(fieldValue(account.zip) || "");
+
+          // The current Mr India address flow is Mauritius-only.
+          const country = "Mauritius";
+
+          const odooAddress: SavedAddress = {
+            id: String(
+              account.customerId || user?.customerId || user?.id || "",
+            ),
+            label: "Delivery address",
+            fullName: name,
+            phone,
+            email,
+            addressLine1: street,
+            addressLine2: street2,
+            city,
+            postalCode,
+            country,
+            isDefaultDelivery: true,
+            isDefaultBilling: false,
+          };
+
+          setSavedAddress(odooAddress);
+
+          // Automatically fill checkout from the Odoo customer profile.
+          setF({
+            name,
+            email,
+            phone,
+            addr: street2 ? `${street}, ${street2}` : street,
+            city,
+            postalCode,
+            country,
+          });
+
+          setErrors({});
+
+          console.log("CHECKOUT ADDRESS AUTOFILLED:", {
+            name,
+            email,
+            phone,
+            street,
+            street2,
+            city,
+            postalCode,
+            country,
+          });
+        } catch (error: any) {
+          console.log("LOAD CHECKOUT ADDRESS ERROR:", error?.message || error);
+
+          if (active) {
+            setSavedAddress(null);
+          }
+        }
+      }
+
+      loadDefaultAddress();
+
+      return () => {
+        active = false;
+      };
+    }, [user]),
+  );
+
+  const serviceTaxPercent = Number(odooPricing?.service_fee?.tax_percent || 0);
+
+  const verificationTaxPercent = Number(
+    odooPricing?.verification_fee?.tax_percent || 0,
+  );
+
+  const serviceVat = serviceFee * (serviceTaxPercent / 100);
+
+  const verificationVat = verifyTotal * (verificationTaxPercent / 100);
+
+  const shippingVat = shipTotal * (shippingTaxPercent / 100);
+
+  const vatTotal = serviceVat + verificationVat + shippingVat;
+
+  const total = itemsTotal + serviceFee + verifyTotal + shipTotal + vatTotal;
+
+  const displayBaseTotal =
+    promoPreview?.baseTotal !== undefined
+      ? Number(promoPreview.baseTotal)
+      : total;
+
+  const displayTotal =
+    promoPreview?.total !== undefined ? Number(promoPreview.total) : total;
+
+  // Actual customer saving, including VAT reduction.
+  const displayDiscount =
+    promoPreview?.total !== undefined
+      ? Math.max(0, displayBaseTotal - displayTotal)
+      : 0;
+
+  // Wallet balance comes from Odoo.
+  // Apply wallet after any promo discount.
+  const walletUsedForDisplay = useWallet
+    ? Math.min(Math.max(walletBalance, 0), Math.max(displayTotal, 0))
+    : 0;
+
+  const finalAmountToPay = Math.max(0, displayTotal - walletUsedForDisplay);
+
+  useEffect(() => {
+    setPromoPreview(null);
+  }, [promoCode, ship, itemsTotal, verifyTotal]);
+
+  const buildOrderPayload = () => ({
+    items: cart.map((i) => ({
+      id: String(i.id),
+      name: i.name,
+      sourcePrice: i.sourcePrice || 0,
+      sourceCurrency: i.sourceCurrency || "INR",
+      displayPrice: i.displayPrice || 0,
+      displayCurrency: i.displayCurrency || "MUR",
+      store: i.store,
+      qty: i.qty || 1,
+      link: i.link || "",
+      options: i.options || "",
+      size: i.size || "",
+      color: i.color || "",
+      notes: i.notes || "",
+      image: i.image || "",
+      verify: !!i.verify,
+    })),
+    ship_method: ship,
+    payment_method: pay,
+    use_wallet: useWallet,
+    promo_code: promoPreview?.code || "",
+    quotation_id: checkoutOrderId || "",
+    cust_name: f.name,
+    cust_email: f.email,
+    cust_phone: f.phone,
+    addr_line: f.addr,
+    addr_city: f.city,
+    addr_zip: f.postalCode,
+    addr_country: f.country,
+  });
+
+  async function applyPromo() {
+    const code = promoCode.trim();
+
+    if (!code) {
+      Alert.alert("Promo code", "Please enter a promo code first.");
+      return;
+    }
+
+    if (!cart.length) {
+      Alert.alert("Promo code", "Your cart is empty.");
+      return;
+    }
+
+    try {
+      setPromoApplying(true);
+      setPromoPreview(null);
+
+      /*
+       * First build/rebuild the normal Odoo draft quotation from the
+       * current mobile cart. Do not apply the promo through this request.
+       */
+      const draftRes = await api.createMiOrder({
+        ...buildOrderPayload(),
+        promo_code: "",
+        preview: true,
+      });
+
+      const draftData = draftRes?.data || {};
+
+      const orderId = Number(draftData.order_id || checkoutOrderId || 0);
+
+      if (!orderId) {
+        throw new Error(
+          "Could not prepare the checkout quotation for this promo code.",
+        );
+      }
+
+      setCheckoutOrderId(orderId);
+
+      /*
+       * Apply the promo through Odoo's existing coupon endpoint.
+       * Odoo remains the source of truth for validation and totals.
+       */
+      const promoRes = await api.applyPromoCode(orderId, code);
+
+      const data = promoRes?.data || {};
+
+      setPromoPreview({
+        code: String(data.promo_code || code),
+        orderId,
+        discount: Number(data.promo_discount || 0),
+        percent: Number(data.promo_percent || 0),
+        vat: Number(data.vat || 0),
+        total: Number(data.total || 0),
+        baseTotal: Number(draftData.total || 0),
+      });
+    } catch (error: any) {
+      setPromoPreview(null);
+
+      Alert.alert(
+        "Promo code",
+        error?.message || "This promo code could not be applied.",
+      );
+    } finally {
+      setPromoApplying(false);
+    }
+  }
+
+  async function placeOrder() {
+    const newErrors = {
+      name: !f.name.trim(),
+      email: !f.email.trim(),
+      addr: !f.addr.trim(),
+      city: !f.city.trim(),
+      country: !f.country.trim(),
+    };
+
+    setErrors(newErrors);
+
+    const hasErrors = Object.values(newErrors).some(Boolean);
+
+    if (hasErrors) {
+      Alert.alert(
+        "Missing information",
+        "Please complete the highlighted fields before placing your order.",
+      );
+      return;
+    }
+
+    setBusy(true);
+
+    const payload = buildOrderPayload();
+
+    try {
+      console.log("========== CREATE MR INDIA ORDER ==========");
+      console.log("ORDER PAYLOAD:", JSON.stringify(payload, null, 2));
+
+      console.log("CHECKOUT CREATE ORDER START:", new Date().toISOString());
+
+      const startTime = Date.now();
+
+      const res = await api.createMiOrder(payload);
+
+      console.log(
+        "CHECKOUT CREATE ORDER FINISHED:",
+        new Date().toISOString(),
+        "TIME:",
+        ((Date.now() - startTime) / 1000).toFixed(2),
+        "seconds",
+      );
+
+      console.log("CREATE ORDER RESULT:", JSON.stringify(res, null, 2));
+
+      const ref =
+        res?.order?.order_ref ||
+        res?.order_ref ||
+        res?.reference ||
+        res?.name ||
+        res?.id?.toString() ||
+        "Order created";
+
+      clearCart();
+
+      setCheckoutOrderId(null);
+
+      setPromoPreview(null);
+
+      setPromoCode("");
+
+      setUseWallet(false);
+      router.replace({
+        pathname: "/orders",
+        params: {
+          justOrdered: ref,
+        },
+      });
+    } catch (error: any) {
+      console.log("CREATE ORDER ERROR:");
+      console.log(JSON.stringify(error, null, 2));
+
+      Alert.alert(
+        "Order could not be created",
+        error?.message ||
+          "We could not create your order in Mr India. Your cart has not been cleared. Please try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+      {/* Keep form fields visible above the keyboard on iOS. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          style={s.scroll}
+          contentContainerStyle={s.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Checkout heading and back-navigation button. */}
+          <View style={s.headerRow}>
+            <TouchableOpacity
+              onPress={() => router.replace("/cart")}
+              style={s.backBtn}
+            >
+              <Ionicons name="chevron-back" size={25} color={COLORS.t1} />
+            </TouchableOpacity>
+
+            <Text style={s.pageTitle}>Checkout</Text>
+          </View>
+
+          <Text style={s.section}>1. Order Summary</Text>
+          {/* Summary card linking back to the detailed cart. */}
+          <TouchableOpacity
+            style={s.topSummary}
+            activeOpacity={0.85}
+            onPress={() => router.push("/cart")}
+          >
+            <View style={s.summaryIcon}>
+              <Ionicons
+                name="bag-handle-outline"
+                size={22}
+                color={COLORS.amber}
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={s.topSummaryTitle}>Order summary</Text>
+              <Text style={s.topSummarySub}>
+                {units} unit{units !== 1 ? "s" : ""} - tap to view items
+              </Text>
+            </View>
+
+            <View style={s.summaryRight}>
+              <Text style={s.topSummaryPrice}>
+                {money(itemsTotal + verifyTotal)}
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={COLORS.t3} />
+            </View>
+          </TouchableOpacity>
+
+          <Text style={s.section}>2. Shipping method</Text>
+
+          {(["express", "standard"] as const).map((id) => {
+            const on = ship === id;
+
+            const price = id === "express" ? expressShipping : standardShipping;
+
+            const label =
+              id === "express"
+                ? odooPricing?.express_shipping?.name || "Express Shipping"
+                : odooPricing?.standard_shipping?.name || "Standard Shipping";
+
+            const eta =
+              id === "express"
+                ? "~2 weeks after items reach our warehouse"
+                : "~3 weeks after items reach our warehouse";
+
+            return (
+              <TouchableOpacity
+                key={id}
+                style={[s.shipOpt, on && s.shipOn]}
+                onPress={() => setShip(id)}
+                activeOpacity={0.86}
+                disabled={pricingLoading}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.shipLabel, on && { color: COLORS.amber }]}>
+                    {label} - {pricingLoading ? "Loading..." : money(price)}
+                  </Text>
+
+                  <Text style={s.shipEta}>{eta}</Text>
+                </View>
+
+                <View style={[s.radio, on && s.radioOn]}>
+                  {on && <View style={s.radioDot} />}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          <Text style={s.section}>3. Delivery details</Text>
+
+          {/* Show the saved address that was automatically applied. */}
+          {savedAddress && (
+            <View style={s.savedAddressCard}>
+              <View style={s.savedAddressTop}>
+                <View style={s.savedAddressIcon}>
+                  <Ionicons
+                    name="location-outline"
+                    size={21}
+                    color={COLORS.amber}
+                  />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={s.savedAddressTitle}>
+                    {savedAddress.label} - Default delivery
+                  </Text>
+
+                  <Text style={s.savedAddressSub}>
+                    This address has been filled automatically.
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={s.savedAddressText}>
+                {savedAddress.fullName}
+                {"\n"}
+                {savedAddress.addressLine1}
+                {savedAddress.addressLine2
+                  ? `, ${savedAddress.addressLine2}`
+                  : ""}
+                {"\n"}
+                {savedAddress.city} {savedAddress.postalCode}
+                {"\n"}
+                {savedAddress.country}
+                {"\n"}
+                {savedAddress.phone}
+              </Text>
+
+              {/* Open address management to select or edit another address. */}
+              <TouchableOpacity
+                onPress={() => router.push("/addresses")}
+                style={s.manageAddressBtn}
+                activeOpacity={0.75}
+              >
+                <Text style={s.manageAddressTxt}>Change delivery address</Text>
+
+                <Ionicons
+                  name="chevron-forward"
+                  size={17}
+                  color={COLORS.amber}
+                />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Customer contact and delivery-address fields. */}
+          <View style={s.formCard}>
+            <F
+              label="Full name *"
+              value={f.name}
+              onChangeText={set("name")}
+              error={errors.name}
+              s={s}
+              COLORS={COLORS}
+            />
+
+            <F
+              label="Email *"
+              value={f.email}
+              onChangeText={set("email")}
+              keyboardType="email-address"
+              error={errors.email}
+              s={s}
+              COLORS={COLORS}
+            />
+
+            <F
+              label="Phone"
+              value={f.phone}
+              onChangeText={set("phone")}
+              keyboardType="phone-pad"
+              s={s}
+              COLORS={COLORS}
+            />
+
+            <F
+              label="Street address *"
+              value={f.addr}
+              onChangeText={set("addr")}
+              error={errors.addr}
+              s={s}
+              COLORS={COLORS}
+            />
+
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <F
+                  label="City *"
+                  value={f.city}
+                  onChangeText={set("city")}
+                  error={errors.city}
+                  s={s}
+                  COLORS={COLORS}
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <F
+                  label="Country *"
+                  value={f.country}
+                  onChangeText={set("country")}
+                  error={errors.country}
+                  s={s}
+                  COLORS={COLORS}
+                />
+              </View>
+            </View>
+          </View>
+
+          <Text style={s.section}>4. Payment</Text>
+
+          {/* Render the supported payment methods. */}
+          {PAY.map((p) => {
+            const on = pay === p.id;
+
+            return (
+              <TouchableOpacity
+                key={p.id}
+                style={[s.payOpt, on && s.shipOn]}
+                onPress={() => setPay(p.id)}
+                activeOpacity={0.86}
+              >
+                <View style={s.payLeft}>
+                  <View style={[s.payIcon, on && s.payIconOn]}>
+                    <Ionicons
+                      name={p.icon as any}
+                      size={19}
+                      color={on ? "#FFFFFF" : COLORS.amber}
+                    />
+                  </View>
+
+                  <Text style={[s.payTxt, on && { color: COLORS.amber }]}>
+                    {p.label}
+                  </Text>
+                </View>
+
+                <View style={[s.radio, on && s.radioOn]}>
+                  {on && <View style={s.radioDot} />}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {pay === "mcb" && (
+            <View style={s.mcbBox}>
+              <Text style={s.mcbTitle}>MCB Bank Transfer</Text>
+              <Text style={s.mcbText}>
+                {mcbInstructions ||
+                  "Bank transfer details are currently unavailable."}
+              </Text>
+              <Text style={s.mcbNote}>
+                After making the transfer, tap Pay Mr India below. Your payment
+                will remain pending until it is verified.
+              </Text>
+            </View>
+          )}
+
+          <Text style={s.section}>Use Wallet</Text>
+
+          <TouchableOpacity
+            style={[s.payOpt, useWallet && s.shipOn]}
+            onPress={() => {
+              if (!walletLoading && walletBalance > 0) {
+                setUseWallet((current) => !current);
+              }
+            }}
+            disabled={walletLoading || walletBalance <= 0 || busy}
+            activeOpacity={0.86}
+          >
+            <View style={s.payLeft}>
+              <View style={[s.payIcon, useWallet && s.payIconOn]}>
+                <Ionicons
+                  name="wallet-outline"
+                  size={19}
+                  color={useWallet ? "#FFFFFF" : COLORS.amber}
+                />
+              </View>
+
+              <View>
+                <Text style={[s.payTxt, useWallet && { color: COLORS.amber }]}>
+                  Use my wallet
+                </Text>
+
+                <Text style={s.shipEta}>
+                  {walletLoading
+                    ? "Loading wallet balance..."
+                    : `Available balance: ${money(walletBalance)}`}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[s.radio, useWallet && s.radioOn]}>
+              {useWallet && <View style={s.radioDot} />}
+            </View>
+          </TouchableOpacity>
+
+          <Text style={s.section}>5. Promo code</Text>
+
+          <View style={s.promoCard}>
+            <View style={s.promoIcon}>
+              <Ionicons
+                name="pricetag-outline"
+                size={20}
+                color={COLORS.amber}
+              />
+            </View>
+
+            <TextInput
+              style={s.promoInput}
+              value={promoCode}
+              onChangeText={setPromoCode}
+              placeholder="Enter promo code"
+              placeholderTextColor={COLORS.t3}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              style={s.promoApplyBtn}
+              onPress={applyPromo}
+              disabled={promoApplying || !promoCode.trim()}
+              activeOpacity={0.8}
+            >
+              {promoApplying ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={s.promoApplyTxt}>
+                  {promoPreview ? "Applied" : "Apply"}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={s.sum}>
+            <Line
+              label={`Items (${units} unit${units !== 1 ? "s" : ""}, estimated)`}
+              value={money(itemsTotal)}
+              s={s}
+            />
+
+            <Line label="Service fee" value={money(serviceFee)} s={s} />
+
+            <Line
+              label={`${ship === "express" ? "Express" : "Standard"} shipping`}
+              value={money(shipTotal)}
+              s={s}
+            />
+
+            {verifyTotal > 0 ? (
+              <Line
+                label={`Verification (${money(verificationFee)} per verified unit)`}
+                value={money(verifyTotal)}
+                s={s}
+              />
+            ) : null}
+
+            {vatTotal > 0 ? (
+              <Line label="VAT" value={money(vatTotal)} s={s} />
+            ) : null}
+
+            <View style={s.div} />
+
+            <Line label="SUB TOTAL" value={money(displayBaseTotal)} s={s} />
+
+            {promoPreview && displayDiscount > 0 ? (
+              <Line
+                label={`DISCOUNT (${promoPreview.code})`}
+                value={`-${money(displayDiscount)}`}
+                s={s}
+              />
+            ) : null}
+
+            {useWallet && walletUsedForDisplay > 0 ? (
+              <Line
+                label="WALLET"
+                value={`-${money(walletUsedForDisplay)}`}
+                s={s}
+              />
+            ) : null}
+
+            <View style={s.div} />
+
+            <Line
+              label="TOTAL TO PAY"
+              value={money(finalAmountToPay)}
+              big
+              s={s}
+            />
+          </View>
+
+          <Text style={s.note}>
+            You pay Mr India. We purchase from the stores on your behalf and
+            ship to Mauritius. Final item prices are confirmed before purchase.
+          </Text>
+        </ScrollView>
+
+        {/* Fixed payment button with a loading indicator during submission. */}
+        <View style={s.footer}>
+          {/* <TouchableOpacity style={s.cta} onPress={placeOrder} disabled={busy}> */}
+          <TouchableOpacity
+            style={s.cta}
+            onPress={placeOrder}
+            disabled={busy || pricingLoading || !odooPricing}
+          >
+            {/* {busy ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : ( */}
+            {busy || pricingLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Text style={s.ctaTxt}>
+                  Pay Mr India - {money(finalAmountToPay)}
+                </Text>
+                <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* </SafeAreaView> */}
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// Reusable input field with required-field error styling.
+const F = ({ label, s, COLORS, error, ...p }: any) => (
+  <View style={s.fieldWrap}>
+    <Text style={[s.flabel, error && s.flabelError]}>{label}</Text>
+
+    <TextInput
+      style={[s.fi, error && s.fiError]}
+      placeholderTextColor={COLORS.t3}
+      autoCapitalize="none"
+      {...p}
+    />
+
+    {error && <Text style={s.errorTxt}>This field is required</Text>}
+  </View>
+);
+
+// Reusable row for displaying amounts in the checkout summary.
+const Line = ({ label, value, big, s }: any) => (
+  <View style={s.sumRow}>
+    <Text style={[s.sumLabel, big && s.sumLabelBig]}>{label}</Text>
+    <Text style={[s.sumVal, big && s.sumValBig]}>{value}</Text>
+  </View>
+);
+
+// Create theme-aware styles for the checkout screen.
+const makeStyles = (COLORS: any) =>
+  StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: COLORS.bg,
+    },
+
+    scroll: {
+      flex: 1,
+      backgroundColor: COLORS.bg,
+    },
+
+    scrollContent: {
+      paddingHorizontal: 20,
+      paddingTop: 10,
+      paddingBottom: 130,
+    },
+
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginBottom: 18,
+    },
+
+    backBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 14,
+      backgroundColor: COLORS.bg2,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    pageTitle: {
+      color: COLORS.t1,
+      fontSize: 30,
+      fontWeight: "900",
+      letterSpacing: -0.8,
+    },
+
+    topSummary: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: COLORS.card,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 22,
+      padding: 15,
+      marginBottom: 18,
+      gap: 12,
+    },
+
+    summaryIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 15,
+      backgroundColor: COLORS.bg2,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    topSummaryTitle: {
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+
+    topSummarySub: {
+      color: COLORS.t3,
+      fontSize: 12,
+      marginTop: 2,
+    },
+
+    topSummaryPrice: {
+      color: COLORS.amber,
+      fontSize: 17,
+      fontWeight: "900",
+    },
+
+    section: {
+      color: COLORS.t1,
+      fontSize: 18,
+      fontWeight: "900",
+      marginTop: 20,
+      marginBottom: 12,
+      letterSpacing: -0.2,
+    },
+
+    shipOpt: {
+      flexDirection: "row",
+      alignItems: "center",
+      borderWidth: 1.5,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.card,
+      borderRadius: 18,
+      padding: 16,
+      marginBottom: 11,
+    },
+
+    shipOn: {
+      borderColor: COLORS.amber,
+      backgroundColor:
+        COLORS.bg === "#131F2A"
+          ? "rgba(255,122,5,0.13)"
+          : "rgba(225,108,0,0.08)",
+    },
+
+    shipLabel: {
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+
+    shipEta: {
+      color: COLORS.t2,
+      fontSize: 13,
+      marginTop: 5,
+      lineHeight: 18,
+    },
+
+    radio: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: COLORS.border,
+      alignItems: "center",
+      justifyContent: "center",
+      marginLeft: 12,
+    },
+
+    radioOn: {
+      borderColor: COLORS.amber,
+      backgroundColor: COLORS.amber,
+    },
+
+    radioDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: "#FFFFFF",
+    },
+
+    formCard: {
+      backgroundColor: COLORS.card,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      padding: 16,
+      marginBottom: 4,
+    },
+
+    fieldWrap: {
+      marginBottom: 13,
+    },
+
+    flabel: {
+      color: COLORS.amber,
+      fontSize: 11,
+      fontWeight: "900",
+      textTransform: "uppercase",
+      marginBottom: 7,
+      letterSpacing: 0.3,
+    },
+
+    fiError: {
+      borderColor: COLORS.amber,
+      borderWidth: 1.5,
+      backgroundColor:
+        COLORS.bg === "#131F2A"
+          ? "rgba(255,122,5,0.10)"
+          : "rgba(245,106,0,0.06)",
+    },
+    errorTxt: {
+      color: COLORS.amber,
+      fontSize: 11,
+      fontWeight: "700",
+      marginTop: 5,
+    },
+
+    fi: {
+      backgroundColor: COLORS.bg2,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 15,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      color: COLORS.t1,
+      fontSize: 15,
+    },
+
+    payOpt: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      borderWidth: 1.5,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.card,
+      borderRadius: 18,
+      padding: 14,
+      marginBottom: 10,
+    },
+
+    payLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+
+    payIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 13,
+      backgroundColor: COLORS.bg2,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    payIconOn: {
+      backgroundColor: COLORS.amber,
+    },
+
+    payTxt: {
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "800",
+    },
+
+    mcbBox: {
+      backgroundColor: COLORS.card,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 18,
+      padding: 16,
+      marginTop: 4,
+      marginBottom: 14,
+    },
+
+    mcbTitle: {
+      color: COLORS.t1,
+      fontSize: 16,
+      fontWeight: "900",
+      marginBottom: 10,
+    },
+
+    mcbText: {
+      color: COLORS.t1,
+      fontSize: 14,
+      lineHeight: 21,
+    },
+
+    mcbNote: {
+      color: COLORS.t2,
+      fontSize: 12,
+      lineHeight: 18,
+      marginTop: 12,
+    },
+
+    promoCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: COLORS.card,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 18,
+      paddingHorizontal: 14,
+      marginBottom: 8,
+    },
+
+    promoIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: COLORS.bg2,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 10,
+    },
+
+    promoInput: {
+      flex: 1,
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "700",
+      paddingVertical: 15,
+    },
+
+    promoApplyBtn: {
+      minWidth: 74,
+      height: 38,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      backgroundColor: COLORS.amber,
+      alignItems: "center",
+      justifyContent: "center",
+      marginLeft: 8,
+    },
+
+    promoApplyTxt: {
+      color: "#FFFFFF",
+      fontSize: 13,
+      fontWeight: "900",
+    },
+
+    sum: {
+      backgroundColor: COLORS.card,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      padding: 18,
+      marginTop: 18,
+    },
+
+    sumRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: 10,
+      alignItems: "center",
+      gap: 12,
+    },
+
+    sumLabel: {
+      color: COLORS.t2,
+      fontSize: 14,
+      flex: 1,
+      lineHeight: 19,
+    },
+
+    sumVal: {
+      color: COLORS.t1,
+      fontSize: 14,
+      fontWeight: "900",
+    },
+
+    sumLabelBig: {
+      color: COLORS.t1,
+      fontWeight: "900",
+      fontSize: 17,
+    },
+
+    sumValBig: {
+      color: COLORS.amber,
+      fontWeight: "900",
+      fontSize: 22,
+    },
+
+    div: {
+      height: 1,
+      backgroundColor: COLORS.border,
+      marginVertical: 8,
+    },
+
+    note: {
+      color: COLORS.t3,
+      fontSize: 12,
+      textAlign: "center",
+      marginTop: 14,
+      lineHeight: 18,
+      paddingHorizontal: 10,
+    },
+
+    footer: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      paddingBottom: 26,
+      backgroundColor: COLORS.bg2,
+      borderTopWidth: 1,
+      borderTopColor: COLORS.border,
+    },
+
+    cta: {
+      backgroundColor: COLORS.amber,
+      borderRadius: 18,
+      paddingVertical: 17,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: 9,
+      shadowColor: COLORS.amber,
+      shadowOpacity: 0.26,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+
+    ctaTxt: {
+      color: "#FFFFFF",
+      fontWeight: "900",
+      fontSize: 16,
+    },
+    summaryRight: {
+      alignItems: "flex-end",
+      justifyContent: "center",
+      gap: 4,
+    },
+    savedAddressCard: {
+      backgroundColor: COLORS.card,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 22,
+      padding: 15,
+      marginBottom: 13,
+    },
+
+    savedAddressTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+
+    savedAddressIcon: {
+      width: 42,
+      height: 42,
+      borderRadius: 15,
+      backgroundColor: COLORS.bg2,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    savedAddressTitle: {
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+
+    savedAddressSub: {
+      color: COLORS.t3,
+      fontSize: 12,
+      marginTop: 2,
+    },
+
+    savedAddressText: {
+      color: COLORS.t2,
+      fontSize: 13.5,
+      lineHeight: 19,
+      marginTop: 12,
+    },
+
+    manageAddressBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 4,
+      marginTop: 11,
+      paddingVertical: 4,
+    },
+
+    manageAddressTxt: {
+      color: COLORS.amber,
+      fontSize: 13,
+      fontWeight: "900",
+    },
+  });

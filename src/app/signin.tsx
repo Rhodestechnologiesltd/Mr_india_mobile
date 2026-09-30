@@ -1,0 +1,1441 @@
+// src/app/signin.tsx â€” premium auth screen: Apple, Google, and Email.
+// NOTE ON SOCIAL SIGN-IN: real "Sign in with Apple" and "Sign in with Google"
+// require developer credentials + native config (Apple entitlement / Google
+// OAuth client IDs) that must be added at build time. The buttons below are
+// fully built; socialSignIn() currently creates a session via the backend so
+// the flow works end-to-end in testing. To go live, wire expo-apple-authentication
+// and expo-auth-session inside socialSignIn() (see INSTALL.txt).
+// src/app/signin.tsx â€” premium auth screen.
+
+import { Ionicons } from "@expo/vector-icons";
+import {
+  GoogleSignin,
+  statusCodes,
+} from "@react-native-google-signin/google-signin";
+import * as AppleAuthentication from "expo-apple-authentication";
+import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useColorScheme,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  api,
+  getColors,
+  GRAD,
+  saveMobikulOtpCredentials,
+  useStore,
+} from "../lib/mrindia";
+
+// Load the local Mr India logo image.
+const MR_INDIA_LOGO = require("../../assets/images/logos/Mr.india.jpeg");
+
+GoogleSignin.configure({
+  webClientId:
+    "398340522025-hismjl42lc1q4lq61mje16pu4et39l2f.apps.googleusercontent.com",
+  offlineAccess: false,
+});
+// GoogleSignin.configure({
+//   webClientId:
+//     "197641837033-j0i31ou4d4lk916cu5m9lg59555l8ci4.apps.googleusercontent.com",
+//   offlineAccess: false,
+// });
+
+export default function SignIn() {
+  // Provides navigation back to the account screen after authentication.
+  const router = useRouter();
+
+  // Create the active color palette and styles from the device color scheme.
+  const scheme = useColorScheme();
+  const COLORS = getColors(scheme === "dark");
+  const s = makeStyles(COLORS);
+
+  // Retrieve the shared action used to create an authenticated session.
+  const { signIn } = useStore();
+
+  // Switch between the sign-in and registration forms.
+  const [mode, setMode] = useState<"in" | "up" | "verify">("in");
+
+  const [verifyPurpose, setVerifyPurpose] = useState<"register" | "login">(
+    "register",
+  );
+  useFocusEffect(
+    useCallback(() => {
+      setMode("in");
+      setVerifyPurpose("register");
+
+      setF((p) => ({
+        ...p,
+        otp: "",
+      }));
+
+      setErrors({
+        name: "",
+        email: "",
+        password: "",
+        confirmPassword: "",
+        otp: "",
+      });
+
+      setBusy(false);
+    }, []),
+  );
+
+  // Store the values entered in the authentication form.
+  const [f, setF] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+    otp: "",
+  });
+
+  // Track request progress and password visibility.
+  const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Store a validation message for each form field.
+  const [errors, setErrors] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+    otp: "",
+  });
+
+  // Update a field and remove its validation error as the user types.
+  const set =
+    (k: "name" | "email" | "password" | "confirmPassword" | "otp") =>
+    (v: string) => {
+      setF((p) => ({ ...p, [k]: v }));
+
+      if (errors[k]) {
+        setErrors((p) => ({ ...p, [k]: "" }));
+      }
+    };
+
+  async function emailAuth() {
+    const nextErrors = {
+      name: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+      otp: "",
+    };
+
+    const email = f.email.trim().toLowerCase();
+    const password = f.password;
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (mode === "up" && !f.name.trim()) {
+      nextErrors.name = "Full name is required.";
+    }
+
+    if (!email) {
+      nextErrors.email = "Email address is required.";
+    } else if (!emailRegex.test(email)) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+
+    if (!password.trim()) {
+      nextErrors.password = "Password is required.";
+    } else if (password.length < 6) {
+      nextErrors.password = "Password must be at least 6 characters.";
+    }
+
+    if (mode === "up") {
+      if (!f.confirmPassword) {
+        nextErrors.confirmPassword = "Please confirm your password.";
+      } else if (password !== f.confirmPassword) {
+        nextErrors.confirmPassword = "Passwords do not match.";
+      }
+    }
+
+    setErrors(nextErrors);
+
+    if (
+      nextErrors.name ||
+      nextErrors.email ||
+      nextErrors.password ||
+      nextErrors.confirmPassword
+    ) {
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      if (mode === "up") {
+        console.log("========== SEND REGISTRATION OTP ==========");
+
+        const result = await api.sendRegistrationOtp(
+          f.name.trim(),
+          email,
+          password,
+          f.confirmPassword,
+        );
+
+        console.log("SEND OTP RESULT:", JSON.stringify(result, null, 2));
+
+        setF((p) => ({
+          ...p,
+          otp: "",
+        }));
+
+        setVerifyPurpose("register");
+        setMode("verify");
+
+        Alert.alert(
+          "Verify your email",
+          `We sent a 4-digit verification code to ${email}.`,
+        );
+
+        return;
+      }
+
+      console.log("========== LOGIN ==========");
+
+      const res = await api.login(email, password);
+
+      console.log("AUTH RESULT:", JSON.stringify(res, null, 2));
+
+      const user = {
+        id: res.userId,
+        customerId: res.customerId,
+
+        name: res.customerName,
+        full_name: res.customerName,
+
+        email: res.customerEmail,
+
+        walletBalance: res.wallet_balance ?? 0,
+
+        isCompleteProfile: res.isCompleteProfile ?? false,
+
+        profileImage: res.customerProfileImage || null,
+        bannerImage: res.customerBannerImage || null,
+
+        cartCount: res.cartCount ?? 0,
+        cartId: res.cartId || null,
+
+        language: res.customerLang || "en",
+
+        role: "customer",
+      };
+
+      await signIn(user, "odoo-session");
+
+      if (user.isCompleteProfile === false) {
+        router.replace({
+          pathname: "/addresses",
+          params: {
+            setup: "1",
+          },
+        });
+
+        return;
+      }
+
+      router.replace("/");
+    } catch (error: any) {
+      console.log("AUTH ERROR:", JSON.stringify(error, null, 2));
+
+      let message = error?.message || "Unable to authenticate with Mr India.";
+
+      if (mode === "in") {
+        const normalized = String(message).toLowerCase();
+
+        if (
+          normalized.includes("login failed") ||
+          normalized.includes("invalid email") ||
+          normalized.includes("wrong login") ||
+          normalized.includes("wrong password")
+        ) {
+          message = "Incorrect email or password.";
+        }
+      }
+
+      Alert.alert(
+        mode === "up" ? "Registration failed" : "Sign in failed",
+        message,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendLoginOtp() {
+    const email = f.email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email) {
+      setErrors((p) => ({
+        ...p,
+        email: "Email address is required.",
+      }));
+      return;
+    }
+
+    if (!emailRegex.test(email)) {
+      setErrors((p) => ({
+        ...p,
+        email: "Enter a valid email address.",
+      }));
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      await api.sendLoginOtp(email);
+
+      setF((p) => ({
+        ...p,
+        otp: "",
+      }));
+
+      setErrors((p) => ({
+        ...p,
+        email: "",
+        otp: "",
+      }));
+
+      setVerifyPurpose("login");
+      setMode("verify");
+
+      Alert.alert(
+        "Check your email",
+        `We sent a 4-digit login code to ${email}.`,
+      );
+    } catch (error: any) {
+      Alert.alert(
+        "Unable to send code",
+        error?.message || "Unable to send your login code.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyLogin() {
+    const otp = f.otp.trim();
+    const email = f.email.trim().toLowerCase();
+
+    if (!otp) {
+      setErrors((p) => ({
+        ...p,
+        otp: "Verification code is required.",
+      }));
+      return;
+    }
+
+    if (!/^\d{4}$/.test(otp)) {
+      setErrors((p) => ({
+        ...p,
+        otp: "Enter the 4-digit verification code.",
+      }));
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      console.log("========== VERIFY LOGIN OTP ==========");
+
+      const res = await api.verifyLoginOtp(email, otp);
+
+      console.log("LOGIN OTP RESULT:", JSON.stringify(res, null, 2));
+
+      const user = {
+        id: res.userId,
+        customerId: res.customerId,
+        name: res.customerName,
+        full_name: res.customerName,
+        email: res.customerEmail,
+        walletBalance: res.wallet_balance ?? 0,
+        isCompleteProfile: res.isCompleteProfile ?? false,
+        profileImage: res.customerProfileImage || null,
+        bannerImage: res.customerBannerImage || null,
+        cartCount: res.cartCount ?? 0,
+        cartId: res.cartId || null,
+        language: res.customerLang || "en",
+        role: "customer",
+      };
+
+      await saveMobikulOtpCredentials(email);
+
+      await signIn(user, "odoo-otp-session");
+
+      router.replace("/");
+    } catch (error: any) {
+      console.log("LOGIN OTP ERROR:", JSON.stringify(error, null, 2));
+
+      Alert.alert(
+        "Verification failed",
+        error?.message || "Unable to verify your login code.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyRegistration() {
+    const otp = f.otp.trim();
+
+    if (!otp) {
+      setErrors((p) => ({
+        ...p,
+        otp: "Verification code is required.",
+      }));
+
+      return;
+    }
+
+    if (!/^\d{4}$/.test(otp)) {
+      setErrors((p) => ({
+        ...p,
+        otp: "Enter the 4-digit verification code.",
+      }));
+
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      const email = f.email.trim().toLowerCase();
+
+      console.log("========== VERIFY REGISTRATION OTP ==========");
+
+      const verifyResult = await api.verifyRegistrationOtp(
+        f.name.trim(),
+        email,
+        f.password,
+        f.confirmPassword,
+        otp,
+      );
+
+      console.log("VERIFY OTP RESULT:", JSON.stringify(verifyResult, null, 2));
+
+      // OTP verification has created the Odoo account.
+      // Authenticate normally through the existing Mobikul login.
+      const res = await api.login(email, f.password);
+
+      console.log("NEW USER LOGIN RESULT:", JSON.stringify(res, null, 2));
+
+      const user = {
+        id: res.userId,
+        customerId: res.customerId,
+
+        name: res.customerName,
+        full_name: res.customerName,
+
+        email: res.customerEmail,
+
+        walletBalance: res.wallet_balance ?? 0,
+
+        isCompleteProfile: res.isCompleteProfile ?? false,
+
+        profileImage: res.customerProfileImage || null,
+        bannerImage: res.customerBannerImage || null,
+
+        cartCount: res.cartCount ?? 0,
+        cartId: res.cartId || null,
+
+        language: res.customerLang || "en",
+
+        role: "customer",
+      };
+
+      await signIn(user, "odoo-session");
+
+      Alert.alert(
+        "Email verified",
+        "Your Mr India account has been created successfully.",
+      );
+
+      router.replace({
+        pathname: "/addresses",
+        params: {
+          setup: "1",
+        },
+      });
+    } catch (error: any) {
+      console.log("OTP VERIFY ERROR:", JSON.stringify(error, null, 2));
+
+      Alert.alert(
+        "Verification failed",
+        error?.message || "Unable to verify your email.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function googleSignIn() {
+    setBusy(true);
+
+    try {
+      console.log("========== GOOGLE SIGN IN ==========");
+
+      await GoogleSignin.hasPlayServices({
+        showPlayServicesUpdateDialog: true,
+      });
+
+      const result = await GoogleSignin.signIn();
+
+      if (result.type !== "success") {
+        console.log("Google sign-in did not complete.");
+        return;
+      }
+
+      const googleUser = result.data.user;
+
+      if (!googleUser?.id || !googleUser?.email) {
+        throw new Error(
+          "Google did not return the required account information.",
+        );
+      }
+
+      const tokens = await GoogleSignin.getTokens();
+
+      if (!tokens.idToken) {
+        throw new Error("Google did not return an ID token.");
+      }
+
+      console.log("GOOGLE USER:", {
+        id: googleUser.id,
+        name: googleUser.name,
+        email: googleUser.email,
+      });
+
+      console.log("GOOGLE TOKEN STATUS:", {
+        idToken: tokens.idToken ? "RECEIVED" : "MISSING",
+        accessToken: tokens.accessToken ? "RECEIVED" : "MISSING",
+      });
+
+      /*
+       * Send the verified Google identity obtained by the native
+       * Google SDK to Mobikul/Odoo.
+       */
+      const res = await api.googleLogin({
+        name:
+          googleUser.name ||
+          googleUser.givenName ||
+          googleUser.email.split("@")[0],
+
+        email: googleUser.email.toLowerCase(),
+
+        googleUserId: googleUser.id,
+
+        idToken: tokens.idToken,
+      });
+
+      console.log("GOOGLE ODOO AUTH RESULT:", JSON.stringify(res, null, 2));
+
+      const user = {
+        id: res.userId,
+        customerId: res.customerId,
+
+        name: res.customerName || googleUser.name,
+        full_name: res.customerName || googleUser.name,
+
+        email: res.customerEmail || googleUser.email,
+
+        walletBalance: res.wallet_balance ?? 0,
+
+        isCompleteProfile: res.isCompleteProfile ?? false,
+
+        profileImage: res.customerProfileImage || googleUser.photo || null,
+
+        bannerImage: res.customerBannerImage || null,
+
+        cartCount: res.cartCount ?? 0,
+
+        cartId: res.cartId || null,
+
+        language: res.customerLang || "en",
+
+        role: "customer",
+      };
+
+      console.log("SAVING GOOGLE USER:", JSON.stringify(user, null, 2));
+
+      await signIn(user, "odoo-social-session");
+
+      if (user.isCompleteProfile === false) {
+        console.log(
+          "GOOGLE USER PROFILE INCOMPLETE - REDIRECTING TO DELIVERY ADDRESS",
+        );
+
+        router.replace({
+          pathname: "/addresses",
+          params: {
+            setup: "1",
+          },
+        });
+
+        return;
+      }
+
+      console.log("GOOGLE USER AUTHENTICATED - REDIRECTING HOME");
+
+      router.replace("/");
+    } catch (error: any) {
+      console.log("GOOGLE SIGN IN ERROR:", error);
+
+      if (error?.code === statusCodes.SIGN_IN_CANCELLED) {
+        console.log("Google sign-in cancelled.");
+        return;
+      }
+
+      if (error?.code === statusCodes.IN_PROGRESS) {
+        Alert.alert("Google Sign-In", "Google Sign-In is already in progress.");
+        return;
+      }
+
+      if (error?.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        Alert.alert(
+          "Google Play Services",
+          "Google Play Services are unavailable or need updating.",
+        );
+        return;
+      }
+
+      Alert.alert(
+        "Google sign-in failed",
+        error?.message ||
+          error?.messageText ||
+          "Could not authenticate your Google account with Mr India.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function appleSignIn() {
+    if (Platform.OS !== "ios") {
+      Alert.alert(
+        "Apple Sign-In",
+        "Apple Sign-In is available on iPhone and iPad.",
+      );
+      return;
+    }
+
+    if (busy) {
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      console.log("========== APPLE SIGN IN ==========");
+
+      const available = await AppleAuthentication.isAvailableAsync();
+
+      if (!available) {
+        throw new Error("Apple Sign-In is not available on this device.");
+      }
+
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      console.log("APPLE USER:", {
+        user: credential.user,
+        email: credential.email ?? null,
+        fullName: credential.fullName
+          ? {
+              givenName: credential.fullName.givenName,
+              middleName: credential.fullName.middleName,
+              familyName: credential.fullName.familyName,
+            }
+          : null,
+      });
+
+      console.log("APPLE TOKEN STATUS:", {
+        identityToken: credential.identityToken ? "RECEIVED" : "MISSING",
+        authorizationCode: credential.authorizationCode
+          ? "RECEIVED"
+          : "MISSING",
+      });
+
+      if (!credential.user) {
+        throw new Error("Apple did not return a user identifier.");
+      }
+
+      if (!credential.identityToken) {
+        throw new Error("Apple did not return an identity token.");
+      }
+
+      const appleName = [
+        credential.fullName?.givenName,
+        credential.fullName?.middleName,
+        credential.fullName?.familyName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+      const res = await api.appleLogin({
+        name: appleName || null,
+        email: credential.email || null,
+        appleUserId: credential.user,
+        identityToken: credential.identityToken,
+      });
+
+      console.log(
+        "APPLE ODOO AUTH RESULT:",
+        JSON.stringify(res, null, 2),
+      );
+
+      const user = {
+        id: res.userId,
+        customerId: res.customerId,
+
+        name: res.customerName || appleName || "Apple User",
+        full_name: res.customerName || appleName || "Apple User",
+
+        email: res.customerEmail || credential.email || "",
+
+        walletBalance: res.wallet_balance ?? 0,
+
+        isCompleteProfile: res.isCompleteProfile ?? false,
+
+        profileImage: res.customerProfileImage || null,
+        bannerImage: res.customerBannerImage || null,
+
+        cartCount: res.cartCount ?? 0,
+        cartId: res.cartId || null,
+
+        language: res.customerLang || "en",
+
+        role: "customer",
+      };
+
+      console.log(
+        "SAVING APPLE USER:",
+        JSON.stringify(user, null, 2),
+      );
+
+      await signIn(user, "odoo-social-session");
+
+      if (user.isCompleteProfile === false) {
+        console.log(
+          "APPLE USER PROFILE INCOMPLETE - REDIRECTING TO DELIVERY ADDRESS",
+        );
+
+        router.replace({
+          pathname: "/addresses",
+          params: {
+            setup: "1",
+          },
+        });
+
+        return;
+      }
+
+      console.log(
+        "APPLE USER AUTHENTICATED - REDIRECTING HOME",
+      );
+
+      router.replace("/");
+    } catch (error: any) {
+      if (error?.code === "ERR_REQUEST_CANCELED") {
+        console.log("Apple sign-in cancelled.");
+        return;
+      }
+
+      console.log("APPLE SIGN IN ERROR:", error);
+
+      Alert.alert(
+        "Apple sign-in failed",
+        error?.message || "Could not authenticate your Apple account.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Create a test social session for Apple or Google authentication.
+  async function socialSignIn(provider: "apple" | "google") {
+    setBusy(true);
+
+    try {
+      const email = provider + ".user@mrindia.mu";
+
+      try {
+        // Attempt to authenticate the predefined social account.
+        const res = await api.login(email, "Social@123");
+        await signIn(res.user, res.access_token);
+      } catch {
+        // Fall back to a demonstration social account during testing.
+        await signIn(
+          {
+            full_name: provider === "apple" ? "Apple User" : "Google User",
+            email,
+            role: "customer",
+          },
+          "demo-token",
+        );
+      }
+
+      router.replace("/account");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // VERIFY REGISTRATION SCREEN
+  if (mode === "verify") {
+    return (
+      <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <ScrollView
+            style={s.wrap}
+            contentContainerStyle={s.content}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <TouchableOpacity
+              onPress={() => {
+                setF((p) => ({ ...p, otp: "" }));
+                setErrors((p) => ({ ...p, otp: "" }));
+                setMode("up");
+              }}
+              style={s.backBtn}
+            >
+              <Ionicons name="chevron-back" size={27} color={COLORS.t1} />
+            </TouchableOpacity>
+
+            <View style={s.logo}>
+              <Image
+                source={MR_INDIA_LOGO}
+                style={s.logoImg}
+                resizeMode="contain"
+              />
+            </View>
+
+            <Text style={s.title}>Verify your email</Text>
+
+            <Text style={s.sub}>
+              Enter the 4-digit verification code sent to{" "}
+              {f.email.trim().toLowerCase()}.
+            </Text>
+
+            <View
+              style={{
+                marginTop: 18,
+                marginBottom: 8,
+              }}
+            >
+              <Field
+                s={s}
+                COLORS={COLORS}
+                icon="key-outline"
+                placeholder="4-digit verification code"
+                value={f.otp}
+                onChangeText={set("otp")}
+                keyboardType="number-pad"
+                maxLength={4}
+                error={errors.otp}
+              />
+            </View>
+
+            <TouchableOpacity
+              onPress={
+                verifyPurpose === "login" ? verifyLogin : verifyRegistration
+              }
+              disabled={busy}
+              activeOpacity={0.9}
+              style={{ marginTop: 12 }}
+            >
+              <LinearGradient
+                colors={GRAD}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={s.cta}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={s.ctaTxt}>Verify email</Text>
+
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={20}
+                      color="#FFFFFF"
+                    />
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={async () => {
+                setBusy(true);
+
+                try {
+                  if (verifyPurpose === "login") {
+                    await api.sendLoginOtp(f.email.trim().toLowerCase());
+                  } else {
+                    await api.sendRegistrationOtp(
+                      f.name.trim(),
+                      f.email.trim().toLowerCase(),
+                      f.password,
+                      f.confirmPassword,
+                    );
+                  }
+
+                  setF((p) => ({
+                    ...p,
+                    otp: "",
+                  }));
+
+                  Alert.alert(
+                    "Code resent",
+                    "A new verification code has been sent to your email.",
+                  );
+                } catch (error: any) {
+                  Alert.alert(
+                    "Unable to resend code",
+                    error?.message || "Please try again.",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              activeOpacity={0.75}
+              style={{ marginTop: 22 }}
+            >
+              <Text style={s.toggleStrong}>Resend code</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setF((p) => ({ ...p, otp: "" }));
+                setErrors((p) => ({ ...p, otp: "" }));
+                setMode("up");
+              }}
+              activeOpacity={0.75}
+              style={{ marginTop: 18 }}
+            >
+              <Text style={s.toggle}>Change registration details</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
+  return (
+    <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+      {/* Keep form fields visible above the keyboard on iOS. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          style={s.wrap}
+          contentContainerStyle={s.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Mr India branding. */}
+          <View style={s.logo}>
+            <Image
+              source={MR_INDIA_LOGO}
+              style={s.logoImg}
+              resizeMode="contain"
+            />
+          </View>
+
+          {/* Adjust the heading based on the selected authentication mode. */}
+          <Text style={s.title}>
+            {mode === "in" ? "Welcome back" : "Create your account"}
+          </Text>
+
+          <Text style={s.sub}>
+            {mode === "in"
+              ? "Sign in to track orders and check out faster."
+              : "Join Mr India to shop from India, delivered to Mauritius."}
+          </Text>
+
+          {/* Segmented control for switching between sign-in and registration. */}
+          <View style={s.switchWrap}>
+            <TouchableOpacity
+              style={[s.switchBtn, mode === "in" && s.switchOn]}
+              onPress={() => setMode("in")}
+              activeOpacity={0.85}
+            >
+              <Text style={[s.switchTxt, mode === "in" && s.switchTxtOn]}>
+                Sign in
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.switchBtn, mode === "up" && s.switchOn]}
+              onPress={() => setMode("up")}
+              activeOpacity={0.85}
+            >
+              <Text style={[s.switchTxt, mode === "up" && s.switchTxtOn]}>
+                Register
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Apple authentication button. */}
+          <TouchableOpacity
+            style={[s.social, { backgroundColor: "#000000" }]}
+            onPress={appleSignIn}
+            disabled={busy}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="logo-apple" size={22} color="#FFFFFF" />
+            <Text style={[s.socialTxt, { color: "#FFFFFF" }]}>
+              Continue with Apple
+            </Text>
+          </TouchableOpacity>
+
+          {/* Google authentication button. */}
+          <TouchableOpacity
+            style={s.googleBtn}
+            // onPress={() => socialSignIn("google")}
+            onPress={googleSignIn}
+            disabled={busy}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="logo-google" size={21} color="#EA4335" />
+            <Text style={[s.socialTxt, { color: "#111111" }]}>
+              Continue with Google
+            </Text>
+          </TouchableOpacity>
+
+          {/* Separator between social and email authentication methods. */}
+          <View style={s.orRow}>
+            <View style={s.line} />
+            <Text style={s.or}>or</Text>
+            <View style={s.line} />
+          </View>
+
+          {/* Full name is only required when registering a new account. */}
+          {mode === "up" && (
+            <Field
+              s={s}
+              COLORS={COLORS}
+              icon="person-outline"
+              placeholder="Full name"
+              value={f.name}
+              onChangeText={set("name")}
+              error={errors.name}
+            />
+          )}
+
+          <Field
+            s={s}
+            COLORS={COLORS}
+            icon="mail-outline"
+            placeholder="Email address"
+            value={f.email}
+            onChangeText={set("email")}
+            keyboardType="email-address"
+            error={errors.email}
+          />
+
+          {/* Password field includes a control for showing or hiding its value. */}
+          <Field
+            s={s}
+            COLORS={COLORS}
+            icon="lock-closed-outline"
+            placeholder="Password"
+            value={f.password}
+            onChangeText={set("password")}
+            secureTextEntry={!showPassword}
+            isPassword
+            showPassword={showPassword}
+            onTogglePassword={() => setShowPassword((p) => !p)}
+            error={errors.password}
+          />
+          {mode === "in" && (
+            <TouchableOpacity
+              onPress={sendLoginOtp}
+              activeOpacity={0.75}
+              style={{
+                alignSelf: "flex-end",
+                marginTop: 2,
+                marginBottom: 8,
+              }}
+            >
+              <Text style={s.toggleStrong}>Login with OTP</Text>
+            </TouchableOpacity>
+          )}
+          {mode === "up" && (
+            <Field
+              s={s}
+              COLORS={COLORS}
+              icon="lock-closed-outline"
+              placeholder="Confirm password"
+              value={f.confirmPassword}
+              onChangeText={set("confirmPassword")}
+              secureTextEntry={!showPassword}
+              isPassword
+              showPassword={showPassword}
+              onTogglePassword={() => setShowPassword((p) => !p)}
+              error={errors.confirmPassword}
+            />
+          )}
+          {/* Forgot-password recovery is not enabled yet. */}
+
+          {/* Submit the email authentication form. */}
+          <TouchableOpacity
+            onPress={emailAuth}
+            disabled={busy}
+            activeOpacity={0.9}
+            style={{ marginTop: 12 }}
+          >
+            <LinearGradient
+              colors={GRAD}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={s.cta}
+            >
+              {busy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={s.ctaTxt}>
+                    {mode === "in" ? "Sign in" : "Create account"}
+                  </Text>
+                  <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
+                </>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {/* Alternative control for switching authentication modes. */}
+          <TouchableOpacity
+            onPress={() => setMode(mode === "in" ? "up" : "in")}
+            style={{ marginTop: 22 }}
+            activeOpacity={0.75}
+          >
+            <Text style={s.toggle}>
+              {mode === "in"
+                ? "New to Mr India?  "
+                : "Already have an account?  "}
+              <Text style={s.toggleStrong}>
+                {mode === "in" ? "Create account" : "Sign in"}
+              </Text>
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={s.legal}>
+            By continuing you agree to Mr India's Terms & Privacy Policy.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// Reusable authentication input with an icon, error message, and password toggle.
+const Field = ({
+  icon,
+  s,
+  COLORS,
+  error,
+  isPassword,
+  showPassword,
+  onTogglePassword,
+  ...p
+}: any) => (
+  <View style={s.fieldOuter}>
+    <View style={[s.field, !!error && s.fieldError]}>
+      <Ionicons name={icon} size={21} color={error ? COLORS.rose : COLORS.t3} />
+
+      <TextInput
+        style={s.input}
+        placeholderTextColor={COLORS.t3}
+        autoCapitalize="none"
+        {...p}
+      />
+
+      {/* Show the visibility control only for password inputs. */}
+      {isPassword && (
+        <TouchableOpacity onPress={onTogglePassword} style={s.eyeBtn}>
+          <Ionicons
+            name={showPassword ? "eye-off-outline" : "eye-outline"}
+            size={21}
+            color={COLORS.t3}
+          />
+        </TouchableOpacity>
+      )}
+    </View>
+
+    {!!error && <Text style={s.errorTxt}>{error}</Text>}
+  </View>
+);
+
+// Create theme-aware styles for the authentication screen.
+const makeStyles = (COLORS: any) =>
+  StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: COLORS.bg,
+    },
+
+    wrap: {
+      flex: 1,
+      backgroundColor: COLORS.bg,
+    },
+
+    switchWrap: {
+      flexDirection: "row",
+      backgroundColor:
+        COLORS.bg === "#131F2A"
+          ? "rgba(255,255,255,0.06)"
+          : "rgba(255,255,255,0.55)",
+      borderRadius: 18,
+      padding: 4,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+
+    switchBtn: {
+      flex: 1,
+      paddingVertical: 13,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 15,
+    },
+
+    switchOn: {
+      backgroundColor: COLORS.card,
+      shadowColor: "#000",
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 4,
+    },
+
+    switchTxt: {
+      color: COLORS.t3,
+      fontSize: 15,
+      fontWeight: "800",
+    },
+
+    switchTxtOn: {
+      color: COLORS.t1,
+    },
+
+    social: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+      borderRadius: 17,
+      paddingVertical: 17,
+      marginBottom: 13,
+    },
+
+    googleBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+      borderRadius: 17,
+      paddingVertical: 17,
+      marginBottom: 13,
+      backgroundColor: "#FFFFFF",
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+
+    socialTxt: {
+      fontSize: 16,
+      fontWeight: "800",
+    },
+
+    orRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginVertical: 10,
+    },
+
+    line: {
+      flex: 1,
+      height: 1,
+      backgroundColor: COLORS.border,
+    },
+
+    or: {
+      color: COLORS.t3,
+      fontSize: 13,
+      fontWeight: "800",
+    },
+
+    forgotWrap: {
+      alignSelf: "flex-end",
+      marginTop: 2,
+    },
+
+    forgot: {
+      color: COLORS.amber,
+      fontSize: 14,
+      fontWeight: "800",
+    },
+
+    cta: {
+      borderRadius: 18,
+      paddingVertical: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: 10,
+      shadowColor: COLORS.amber,
+      shadowOpacity: 0.25,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+
+    ctaTxt: {
+      color: "#FFFFFF",
+      fontWeight: "900",
+      fontSize: 17,
+    },
+
+    toggle: {
+      color: COLORS.t2,
+      fontSize: 15,
+      textAlign: "center",
+    },
+
+    toggleStrong: {
+      color: COLORS.amber,
+      fontWeight: "900",
+    },
+
+    legal: {
+      color: COLORS.t3,
+      fontSize: 12,
+      textAlign: "center",
+      marginTop: 26,
+      lineHeight: 17,
+    },
+
+    logo: {
+      width: 200,
+      height: 105,
+      borderRadius: 26,
+      backgroundColor: "#FFFFFF",
+      alignItems: "center",
+      justifyContent: "center",
+      alignSelf: "center",
+      marginTop: 0,
+      marginBottom: 24,
+      overflow: "hidden",
+      borderWidth: 1,
+      borderColor: COLORS.border,
+
+      shadowColor: "#000000",
+      shadowOpacity: 0.1,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 7,
+    },
+
+    logoImg: {
+      width: 160,
+      height: 82,
+    },
+    content: {
+      paddingHorizontal: 24,
+      paddingTop: 10,
+      paddingBottom: 40,
+    },
+    backBtn: {
+      width: 42,
+      height: 42,
+      borderRadius: 15,
+      backgroundColor: COLORS.bg2,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 8,
+    },
+    title: {
+      color: COLORS.t1,
+      fontSize: 32,
+      fontWeight: "900",
+      letterSpacing: -1,
+      marginBottom: 6,
+    },
+
+    sub: {
+      color: COLORS.t2,
+      fontSize: 15,
+      lineHeight: 21,
+      marginBottom: 20,
+    },
+    field: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 14,
+      backgroundColor: COLORS.card,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 17,
+      paddingHorizontal: 16,
+    },
+
+    input: {
+      flex: 1,
+      color: COLORS.t1,
+      fontSize: 16,
+      paddingVertical: 15,
+    },
+
+    fieldOuter: {
+      marginBottom: 11,
+    },
+
+    fieldError: {
+      borderColor: COLORS.rose,
+      borderWidth: 1.5,
+    },
+
+    errorTxt: {
+      color: COLORS.rose,
+      fontSize: 12,
+      fontWeight: "700",
+      marginTop: 6,
+      marginLeft: 6,
+    },
+
+    eyeBtn: {
+      padding: 4,
+    },
+  });

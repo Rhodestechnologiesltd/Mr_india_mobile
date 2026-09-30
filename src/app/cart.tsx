@@ -1,0 +1,593 @@
+// src/app/cart.tsx — Mr India cart with MUR pricing, per-product verification,
+// quantity control, and the shipping/eligibility rules surfaced clearly.
+
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+import {
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View,
+} from "react-native";
+
+import { useCallback, useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { api, getColors, money, useStore } from "../lib/mrindia";
+
+export default function Cart() {
+  // Provides navigation to store, browser, and checkout screens.
+  const router = useRouter();
+
+  // Create the active color palette and styles from the device color scheme.
+  const scheme = useColorScheme();
+  const COLORS = getColors(scheme === "dark");
+  const s = makeStyles(COLORS);
+
+  // Retrieve the cart data, calculated total, and cart-management actions.
+  const { cart, removeFromCart, toggleVerify, setQty, itemsTotal, clearCart } =
+    useStore();
+
+  const [verificationFee, setVerificationFee] = useState(0);
+  const [pricingLoading, setPricingLoading] = useState(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      async function loadVerificationPricing() {
+        if (!cart.length) {
+          setPricingLoading(false);
+          return;
+        }
+
+        try {
+          setPricingLoading(true);
+
+          const result = await api.getMiServicesPricing();
+
+          const fee = Number(result?.data?.verification_fee?.price || 0);
+
+          console.log("CART VERIFICATION FEE FROM ODOO:", fee);
+
+          if (active) {
+            setVerificationFee(fee);
+          }
+        } catch (error) {
+          console.log("CART PRICING ERROR:", error);
+
+          if (active) {
+            setVerificationFee(0);
+          }
+        } finally {
+          if (active) {
+            setPricingLoading(false);
+          }
+        }
+      }
+
+      loadVerificationPricing();
+
+      return () => {
+        active = false;
+      };
+    }, [cart.length]),
+  );
+
+  // Calculate verification fees for every verified unit in the cart.
+  // const verifyTotal = cart.reduce(
+  //   (sum, i) => sum + (i.verify ? VERIFY_FEE * (i.qty || 1) : 0),
+  //   0,
+  // );
+  const verifyTotal = cart.reduce(
+    (sum, i) => sum + (i.verify ? verificationFee * (i.qty || 1) : 0),
+    0,
+  );
+
+  // Calculate the total quantity of products selected by the customer.
+  const selectedCount = cart.reduce((sum, i) => sum + (i.qty || 1), 0);
+
+  // Reopen the original product page when a cart item is selected.
+  function openCartItem(it: any) {
+    if (!it.link) return;
+
+    router.push({
+      pathname: "/browser",
+      params: {
+        url: it.link,
+        name: it.store || "Store",
+      },
+    });
+  }
+
+  // Display an empty state when the cart has no products.
+  if (!cart.length) {
+    return (
+      <SafeAreaView style={s.empty} edges={["top", "left", "right"]}>
+        <Text style={{ fontSize: 54 }}>🛍️</Text>
+        <Text style={s.emptyTitle}>Your cart is empty</Text>
+        <Text style={s.emptySub}>
+          Open a store and tap “Shop via Mr India” to add products you want
+          delivered.
+        </Text>
+
+        {/* Return the customer to the store directory. */}
+        <TouchableOpacity style={s.cta} onPress={() => router.push("/")}>
+          <View style={s.ctaRow}>
+            <Text style={s.ctaTxt}>Browse stores</Text>
+            <Ionicons name="arrow-forward" size={19} color="#FFFFFF" />
+          </View>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Cart heading and action for removing every product. */}
+        <View style={s.headerRow}>
+          <Text style={s.pageTitle}>My Cart</Text>
+
+          <TouchableOpacity onPress={clearCart}>
+            <Text style={s.clearTxt}>Clear all</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={s.cartNote}>Only confirmed items can be checked out</Text>
+        {/* Render a card for every product currently in the cart. */}
+        {cart.map((it) => (
+          <TouchableOpacity
+            key={it.id}
+            style={s.card}
+            activeOpacity={0.88}
+            onPress={() => openCartItem(it)}
+            disabled={!it.link}
+          >
+            <View style={s.cardTop}>
+              {/* Display the product image or a placeholder when none is available. */}
+              {it.image ? (
+                <Image source={{ uri: it.image }} style={s.img} />
+              ) : (
+                <View style={[s.img, s.imgPlaceholder]}>
+                  <Text style={{ fontSize: 24 }}>{it.e || "📦"}</Text>
+                </View>
+              )}
+
+              {/* Product store, name, selected options, and quantity-based price. */}
+              <View style={s.itemInfo}>
+                <Text style={s.storeLine}>{it.store}</Text>
+
+                <Text style={s.name} numberOfLines={2}>
+                  {it.name}
+                </Text>
+
+                {!!it.options && <Text style={s.optionTxt}>{it.options}</Text>}
+
+                {/* <Text style={s.price}>
+                  {money((it.price || 0) * (it.qty || 1))}
+                </Text> */}
+
+                <Text style={s.price}>
+                  {money((it.displayPrice || 0) * (it.qty || 1))}
+                </Text>
+
+                <Text style={s.meta}>
+                  {it.sourceCurrency}{" "}
+                  {Number(it.sourcePrice || 0).toLocaleString("en-US")}
+                </Text>
+              </View>
+
+              {/* Remove this product from the cart. */}
+              <TouchableOpacity
+                onPress={() => removeFromCart(it.id)}
+                style={s.deleteBtn}
+              >
+                <Ionicons name="trash-outline" size={18} color={COLORS.t3} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={s.cardBottom}>
+              {/* Controls for decreasing or increasing the product quantity. */}
+              <View style={s.qty}>
+                <TouchableOpacity
+                  onPress={() => setQty(it.id, (it.qty || 1) - 1)}
+                  style={s.qtyBtn}
+                >
+                  <Text style={s.qtyBtnTxt}>−</Text>
+                </TouchableOpacity>
+
+                <Text style={s.qtyNum}>{it.qty || 1}</Text>
+
+                <TouchableOpacity
+                  onPress={() => setQty(it.id, (it.qty || 1) + 1)}
+                  style={s.qtyBtn}
+                >
+                  <Text style={s.qtyBtnTxt}>+</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Toggle the optional verification service for this product. */}
+              <TouchableOpacity
+                onPress={() => toggleVerify(it.id)}
+                style={[s.verify, it.verify && s.verifyOn]}
+              >
+                <Text style={[s.verifyTxt, it.verify && { color: "#FFFFFF" }]}>
+                  {/* {it.verify ? "Verified " : ""}Verify +{money(VERIFY_FEE)} */}
+                  {it.verify ? "Verified " : ""}
+                  Verify +{pricingLoading ? "..." : money(verificationFee)}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* Cart total and price breakdown. */}
+        <View style={s.sum}>
+          <Text style={s.subtotalTxt}>
+            Subtotal - {selectedCount} item{selectedCount > 1 ? "s" : ""}{" "}
+            selected
+          </Text>
+
+          <Text style={s.bigTotal}>{money(itemsTotal + verifyTotal)}</Text>
+
+          <Text style={s.shippingTxt}>
+            + shipping & handling calculated at checkout
+          </Text>
+
+          <View style={s.sumDivider} />
+
+          <Line label="Items" value={money(itemsTotal)} s={s} COLORS={COLORS} />
+
+          {/* Only display verification in the summary when it was selected. */}
+          {verifyTotal > 0 ? (
+            <Line
+              label="Verification"
+              value={money(verifyTotal)}
+              s={s}
+              COLORS={COLORS}
+            />
+          ) : null}
+        </View>
+      </ScrollView>
+
+      {/* Fixed checkout action displayed below the cart contents. */}
+      <View style={s.footer}>
+        <TouchableOpacity
+          style={s.cta}
+          onPress={() => router.push("/checkout")}
+          disabled={pricingLoading}
+        >
+          <Text style={s.ctaTxt}>
+            {pricingLoading
+              ? "Loading pricing..."
+              : "Choose shipping & checkout"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// Reusable row for displaying an amount in the cart summary.
+const Line = ({ label, value, muted, s, COLORS }: any) => (
+  <View style={s.sumRow}>
+    <Text style={s.sumLabel}>{label}</Text>
+    <Text style={[s.sumVal, muted && { color: COLORS.t3, fontWeight: "400" }]}>
+      {value}
+    </Text>
+  </View>
+);
+
+// Create theme-aware styles for the cart screen.
+const makeStyles = (COLORS: any) =>
+  StyleSheet.create({
+    empty: {
+      flex: 1,
+      backgroundColor: COLORS.bg,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 30,
+    },
+    emptyTitle: {
+      color: COLORS.t1,
+      fontSize: 21,
+      fontWeight: "800",
+      marginTop: 14,
+    },
+    emptySub: {
+      color: COLORS.t2,
+      fontSize: 14,
+      textAlign: "center",
+      marginTop: 8,
+      marginBottom: 20,
+      lineHeight: 21,
+    },
+    rules: {
+      backgroundColor: "rgba(0,204,176,0.08)",
+      borderWidth: 1,
+      borderColor: "rgba(0,204,176,0.25)",
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 14,
+    },
+    rulesTitle: { color: COLORS.teal, fontWeight: "800", fontSize: 13 },
+    rulesTxt: { color: COLORS.t2, fontSize: 12, marginTop: 4, lineHeight: 17 },
+
+    row: { flexDirection: "row", gap: 12, alignItems: "center" },
+
+    meta: { color: COLORS.t3, fontSize: 11, marginTop: 2 },
+
+    controls: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginTop: 12,
+    },
+
+    sumRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: 8,
+    },
+    sumLabel: { color: COLORS.t2, fontSize: 13 },
+    sumVal: { color: COLORS.t1, fontSize: 13, fontWeight: "700" },
+    estNote: { color: COLORS.t3, fontSize: 11, marginTop: 8, lineHeight: 16 },
+    openHint: {
+      color: COLORS.teal,
+      fontSize: 11,
+      fontWeight: "700",
+      marginTop: 4,
+    },
+    safe: {
+      flex: 1,
+
+      backgroundColor: COLORS.bg,
+    },
+
+    scroll: {
+      flex: 1,
+
+      backgroundColor: COLORS.bg,
+    },
+
+    scrollContent: {
+      padding: 16,
+
+      paddingBottom: 24,
+    },
+
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 14,
+    },
+
+    pageTitle: {
+      color: COLORS.t1,
+      fontSize: 32,
+      fontWeight: "900",
+      letterSpacing: -0.8,
+    },
+
+    clearTxt: {
+      color: COLORS.amber,
+      fontSize: 15,
+      fontWeight: "800",
+    },
+
+    cartNote: {
+      color: COLORS.t3,
+      textAlign: "center",
+      fontSize: 13,
+      marginBottom: 18,
+    },
+
+    card: {
+      backgroundColor: COLORS.card,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      padding: 14,
+      marginBottom: 14,
+    },
+
+    cardTop: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 12,
+    },
+
+    img: {
+      width: 85,
+      height: 85,
+      borderRadius: 14,
+      backgroundColor: COLORS.card2,
+    },
+
+    imgPlaceholder: {
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    itemInfo: {
+      flex: 1,
+    },
+
+    storeLine: {
+      color: COLORS.t3,
+      fontSize: 13,
+      fontWeight: "800",
+      marginBottom: 5,
+    },
+
+    name: {
+      color: COLORS.t1,
+      fontSize: 17,
+      fontWeight: "800",
+      lineHeight: 19,
+    },
+
+    optionTxt: {
+      color: COLORS.amber,
+      fontSize: 13,
+      fontWeight: "800",
+      marginTop: 4,
+    },
+
+    price: {
+      color: COLORS.t1,
+      fontSize: 20,
+      fontWeight: "900",
+      marginTop: 10,
+    },
+
+    deleteBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: COLORS.bg2,
+    },
+
+    cardBottom: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginTop: 16,
+    },
+
+    qty: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: COLORS.bg2,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      overflow: "hidden",
+    },
+
+    qtyBtn: {
+      width: 42,
+      height: 38,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    qtyBtnTxt: {
+      color: COLORS.amber,
+      fontSize: 20,
+      fontWeight: "900",
+    },
+
+    qtyNum: {
+      color: COLORS.t1,
+      fontSize: 15,
+      fontWeight: "800",
+      width: 36,
+      textAlign: "center",
+    },
+
+    verify: {
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: COLORS.bg2,
+    },
+
+    verifyOn: {
+      backgroundColor: COLORS.amber,
+      borderColor: COLORS.amber,
+    },
+
+    verifyTxt: {
+      color: COLORS.t2,
+      fontSize: 12,
+      fontWeight: "800",
+    },
+
+    sum: {
+      backgroundColor: COLORS.card,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      padding: 22,
+      marginTop: 5,
+    },
+
+    subtotalTxt: {
+      color: COLORS.t3,
+      fontSize: 13,
+      marginBottom: 8,
+    },
+
+    bigTotal: {
+      color: COLORS.t1,
+      fontSize: 30,
+      fontWeight: "900",
+      letterSpacing: -0.5,
+    },
+
+    shippingTxt: {
+      color: COLORS.t3,
+      fontSize: 12,
+      marginTop: 8,
+      marginBottom: 14,
+    },
+
+    sumDivider: {
+      height: 1,
+      backgroundColor: COLORS.border,
+      marginBottom: 12,
+    },
+
+    footer: {
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 12,
+      borderTopWidth: 1,
+      borderTopColor: COLORS.border,
+      backgroundColor: COLORS.bg2,
+    },
+
+    cta: {
+      backgroundColor: COLORS.amber,
+      borderRadius: 22,
+      paddingVertical: 16,
+      paddingHorizontal: 28,
+      minWidth: 180,
+      alignItems: "center",
+      justifyContent: "center",
+
+      shadowColor: COLORS.amber,
+      shadowOpacity: 0.28,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+
+    ctaTxt: {
+      color: "#FFFFFF",
+      fontWeight: "900",
+      fontSize: 16,
+      letterSpacing: 0.2,
+    },
+    ctaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+  });
