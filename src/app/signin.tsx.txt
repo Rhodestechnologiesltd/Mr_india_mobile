@@ -1,4 +1,4 @@
-﻿// src/app/signin.tsx Ã¢â‚¬â€ premium auth screen: Apple, Google, and Email.
+// src/app/signin.tsx Ã¢â‚¬â€ premium auth screen: Apple, Google, and Email.
 // NOTE ON SOCIAL SIGN-IN: real "Sign in with Apple" and "Sign in with Google"
 // require developer credentials + native config (Apple entitlement / Google
 // OAuth client IDs) that must be added at build time. The buttons below are

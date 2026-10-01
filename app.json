@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/logos/Mr India Logo mobile.png",
-      "bundleIdentifier": "mu.mrindia.test",
+      "bundleIdentifier": "com.mrindia.mobile",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -25,7 +25,7 @@
         "foregroundImage": "./assets/images/logos/Mr India Logo mobile.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.mrindia54"
+      "package": "mrindia.mu.mobile"
     },
     "web": {
       "output": "static",
@@ -73,6 +73,3 @@
     }
   }
 }
-
-
-

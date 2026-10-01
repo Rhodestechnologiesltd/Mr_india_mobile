@@ -1,4 +1,4 @@
-﻿// src/lib/mrindia.tsx ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â shared config, store list, and cart/auth context.
+// src/lib/mrindia.tsx ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â shared config, store list, and cart/auth context.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import React, { createContext, useContext, useEffect, useState } from "react";
