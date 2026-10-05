@@ -596,7 +596,9 @@ export default function Checkout() {
             </View>
 
             <View style={s.summaryRight}>
-              <Text style={s.topSummaryPrice}>{money(itemsTotal + verifyTotal)}</Text>
+              <Text style={s.topSummaryPrice}>
+                {money(itemsTotal + verifyTotal)}
+              </Text>
               <Ionicons name="chevron-forward" size={18} color={COLORS.t3} />
             </View>
           </TouchableOpacity>
@@ -848,28 +850,7 @@ export default function Checkout() {
               {useWallet && <View style={s.radioDot} />}
             </View>
           </TouchableOpacity>
-          {/* Complete checkout cost breakdown.
-          <View style={s.sum}>
-            <Line
-              label={`Items (${units} unit${units !== 1 ? "s" : ""}, estimated)`}
-              value={money(itemsTotal)}
-              s={s}
-            />
 
-            <Line
-              label={`${SHIPPING[ship].label} shipping (${money(shipPerProduct)} x ${units})`}
-              value={money(shipTotal)}
-              s={s}
-            />
-
-            {verifyTotal > 0 ? (
-              <Line label="Verification" value={money(verifyTotal)} s={s} />
-            ) : null}
-
-            <View style={s.div} />
-
-            <Line label="Estimated total" value={money(total)} big s={s} />
-          </View> */}
           <Text style={s.section}>5. Promo code</Text>
 
           <View style={s.promoCard}>
@@ -1485,5 +1466,3 @@ const makeStyles = (COLORS: any) =>
       fontWeight: "900",
     },
   });
-
-

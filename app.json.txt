@@ -1,4 +1,4 @@
-{
+﻿{
   "expo": {
     "name": "Mr India",
     "slug": "mrindia54",

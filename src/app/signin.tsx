@@ -43,17 +43,27 @@ import {
 const MR_INDIA_LOGO = require("../../assets/images/logos/Mr.india.jpeg");
 const GOOGLE_LOGO = require("../../assets/images/google/g-logo.png");
 
-GoogleSignin.configure({
-  webClientId:
-    "398340522025-hismjl42lc1q4lq61mje16pu4et39l2f.apps.googleusercontent.com",
-  offlineAccess: false,
-});
+// GoogleSignin.configure({
+//   webClientId:
+//     "398340522025-hismjl42lc1q4lq61mje16pu4et39l2f.apps.googleusercontent.com",
+//   offlineAccess: false,
+// });
 
 // GoogleSignin.configure({
 //   webClientId:
 //     "197641837033-j0i31ou4d4lk916cu5m9lg59555l8ci4.apps.googleusercontent.com",
 //   offlineAccess: false,
 // });
+
+GoogleSignin.configure({
+  webClientId:
+    "1040712934510-kqtm4foisd6ur7s7lrdfmj2e2enu92bv.apps.googleusercontent.com",
+
+  iosClientId:
+    "1040712934510-o0oosk1jv3lcb66fi9jm6mq3hcmpa1fd.apps.googleusercontent.com",
+
+  offlineAccess: false,
+});
 
 function logAuthFailure(
   scope: string,
@@ -246,6 +256,13 @@ export default function SignIn() {
     setBusy(true);
 
     try {
+      /*
+       * OTP REGISTRATION - ARCHIVED FOR FUTURE USE
+       *
+       * This is the original OTP-based signup implementation.
+       * Direct email/password registration is active below.
+       * Restore carefully only after backend testing.
+       *
       if (mode === "up") {
         console.log("========== SEND REGISTRATION OTP ==========");
 
@@ -272,6 +289,19 @@ export default function SignIn() {
         );
 
         return;
+      }
+       */
+
+      if (mode === "up") {
+        console.log("========== DIRECT REGISTRATION ==========");
+
+        const result = await api.register(f.name.trim(), email, password);
+
+        if (result?.success !== true) {
+          throw new Error(result?.message || "Unable to create account.");
+        }
+
+        console.log("REGISTRATION SUCCESS");
       }
 
       console.log("========== LOGIN ==========");
@@ -305,6 +335,14 @@ export default function SignIn() {
       };
 
       await signIn(user, "odoo-session");
+
+      if (mode === "up") {
+        router.replace({
+          pathname: "/addresses",
+          params: { setup: "1" },
+        });
+        return;
+      }
 
       if (user.isCompleteProfile === false) {
         router.replace({

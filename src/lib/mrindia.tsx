@@ -18,7 +18,7 @@ const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
 // const MOBIKUL_API_KEY = "dummySecretKey";
 
 // //Home IP
-// export const API_BASE = "http://192.168.0.3:8067";
+//export const API_BASE = "http://192.168.100.21:8067";
 
 // Pricing rules (all in MUR)
 export const SHIPPING = {
@@ -1156,6 +1156,7 @@ export const api = {
       name,
       login: email,
       password,
+      registration_source: "mrindia_mobile",
     }),
 
   myAccount: () => mobikulReq("/mobikul/my/account", "POST", {}),

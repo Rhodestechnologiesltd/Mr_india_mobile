@@ -48,9 +48,7 @@ export default function Cart() {
 
           const result = await api.getMiServicesPricing();
 
-          const fee = Number(
-            result?.data?.verification_fee?.price || 0,
-          );
+          const fee = Number(result?.data?.verification_fee?.price || 0);
 
           console.log("CART VERIFICATION FEE FROM ODOO:", fee);
 
@@ -261,16 +259,11 @@ export default function Cart() {
 
       {/* Fixed checkout action displayed below the cart contents. */}
       <View style={s.footer}>
-        {/* <TouchableOpacity
-          style={s.cta}
-          onPress={() => router.push("/checkout")}
-        > */}
         <TouchableOpacity
           style={s.cta}
           onPress={() => router.push("/checkout")}
           disabled={pricingLoading}
         >
-          {/* <Text style={s.ctaTxt}>Choose shipping & checkout →</Text> */}
           <Text style={s.ctaTxt}>
             {pricingLoading
               ? "Loading pricing..."
