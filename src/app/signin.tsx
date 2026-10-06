@@ -1,4 +1,4 @@
-﻿// src/app/signin.tsx Ã¢â‚¬â€ premium auth screen: Apple, Google, and Email.
+// src/app/signin.tsx Ã¢â‚¬â€ premium auth screen: Apple, Google, and Email.
 // NOTE ON SOCIAL SIGN-IN: real "Sign in with Apple" and "Sign in with Google"
 // require developer credentials + native config (Apple entitlement / Google
 // OAuth client IDs) that must be added at build time. The buttons below are
@@ -257,11 +257,12 @@ export default function SignIn() {
 
     try {
       /*
-       * OTP REGISTRATION - ARCHIVED FOR FUTURE USE
+       * OTP REGISTRATION - TEMPORARILY DISABLED
        *
-       * This is the original OTP-based signup implementation.
-       * Direct email/password registration is active below.
-       * Restore carefully only after backend testing.
+       * Registration OTP works on the local Odoo server but the
+       * live /mobile/signup/otp/send endpoint currently returns HTTP 500.
+       *
+       * Keep this code for re-enabling after the live backend is fixed.
        *
       if (mode === "up") {
         console.log("========== SEND REGISTRATION OTP ==========");
@@ -295,10 +296,16 @@ export default function SignIn() {
       if (mode === "up") {
         console.log("========== DIRECT REGISTRATION ==========");
 
-        const result = await api.register(f.name.trim(), email, password);
+        const result = await api.register(
+          f.name.trim(),
+          email,
+          password,
+        );
 
         if (result?.success !== true) {
-          throw new Error(result?.message || "Unable to create account.");
+          throw new Error(
+            result?.message || "Unable to create account.",
+          );
         }
 
         console.log("REGISTRATION SUCCESS");
@@ -335,14 +342,6 @@ export default function SignIn() {
       };
 
       await signIn(user, "odoo-session");
-
-      if (mode === "up") {
-        router.replace({
-          pathname: "/addresses",
-          params: { setup: "1" },
-        });
-        return;
-      }
 
       if (user.isCompleteProfile === false) {
         router.replace({
@@ -1189,7 +1188,7 @@ export default function SignIn() {
             onTogglePassword={() => setShowPassword((p) => !p)}
             error={errors.password}
           />
-          {/* {mode === "in" && (
+          {mode === "in" && (
             <TouchableOpacity
               onPress={sendLoginOtp}
               activeOpacity={0.75}
@@ -1201,7 +1200,7 @@ export default function SignIn() {
             >
               <Text style={s.toggleStrong}>Login with OTP</Text>
             </TouchableOpacity>
-          )} */}
+          )}
           {mode === "up" && (
             <Field
               s={s}

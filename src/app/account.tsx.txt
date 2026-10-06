@@ -139,7 +139,7 @@ export default function Account() {
       icon: "help-circle-outline",
       label: "Help & support",
       sub: "Get assistance with your order",
-      onPress: () => {},
+      onPress: () => router.push("/contact-us"),
     },
   ];
 

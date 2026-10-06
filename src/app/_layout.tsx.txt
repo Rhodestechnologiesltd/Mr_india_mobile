@@ -2,9 +2,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { Pressable, StatusBar, useColorScheme } from "react-native";
+import {
+  Pressable,
+  StatusBar,
+  useColorScheme,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StoreProvider, useStore } from "../lib/mrindia";
+import {
+  DARK_COLORS,
+  LIGHT_COLORS,
+  StoreProvider,
+  useStore,
+} from "../lib/mrindia";
 
 // Renders the application's tab navigator using data from the shared store.
 function TabsInner() {
@@ -24,16 +33,18 @@ function TabsInner() {
       <Ionicons name={name} size={size ?? 22} color={color} />
     );
 
-  // Detect the device color scheme and determine the active theme.
+  // Follow the device theme while keeping Mr India's brand palette.
   const scheme = useColorScheme();
   const isDark = scheme === "dark";
-  // Define light and dark colors used by the status bar and tab navigator.
+
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
+
   const theme = {
-    bg: isDark ? "#070A12" : "#F3EEE6",
-    tab: isDark ? "#0C1322" : "#FFF9F0",
-    border: isDark ? "#1E2A3D" : "#E6D8C8",
-    active: "#FF9500",
-    inactive: isDark ? "#8792A2" : "#7C8798",
+    bg: palette.bg,
+    tab: palette.card,
+    border: palette.border,
+    active: palette.amber,
+    inactive: palette.t3,
   };
 
   return (
@@ -181,15 +192,15 @@ function TabsInner() {
           }}
         />
         {/* Wallet screen, accessible from Account only. */}
-      <Tabs.Screen
-        name="wallet"
-        options={{
-          href: null,
-          headerShown: false,
-          tabBarStyle: { display: "none" },
-        }}
-      />
-      {/* Onboarding guide, hidden from the bottom tab bar. */}
+        <Tabs.Screen
+          name="wallet"
+          options={{
+            href: null,
+            headerShown: false,
+            tabBarStyle: { display: "none" },
+          }}
+        />
+        {/* Onboarding guide, hidden from the bottom tab bar. */}
         <Tabs.Screen
           name="onboarding"
           options={{
@@ -243,6 +254,14 @@ function TabsInner() {
             tabBarStyle: { display: "none" },
           }}
         />
+        <Tabs.Screen
+          name="contact-us"
+          options={{
+            href: null,
+            headerShown: false,
+            tabBarStyle: { display: "none" },
+          }}
+        />
       </Tabs>
     </>
   );
@@ -256,7 +275,3 @@ export default function RootLayout() {
     </StoreProvider>
   );
 }
-
-
-
-

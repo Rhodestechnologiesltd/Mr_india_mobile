@@ -7,15 +7,15 @@ import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { encode as base64Encode } from "base-64";
 
 // Point at your backend. For a phone on the same Wi-Fi, use your Mac's LAN IP
-//Office ip
-export const API_BASE = "https://www.mrindia.mu";
-const ODOO_DB = "dh_mr_india_test";
-const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
+//LIVE DATABSE API, MOBIKUL
+// export const API_BASE = "https://www.mrindia.mu";
+// const ODOO_DB = "dh_mr_india_test";
+// const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
 
 //Local Host
-// export const API_BASE = "http://192.168.100.205:8067";
-// const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
-// const MOBIKUL_API_KEY = "dummySecretKey";
+export const API_BASE = "http://192.168.100.205:8067";
+const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
+const MOBIKUL_API_KEY = "dummySecretKey";
 
 // //Home IP
 //export const API_BASE = "http://192.168.100.21:8067";
@@ -54,50 +54,54 @@ export function money(n: number) {
 
 // Color palette used when the device is in light mode.
 export const LIGHT_COLORS = {
+  // Pale blue + warm cream
   bg: "#EEF3F4",
   bg2: "#FFF9F0",
   card: "#FFFDF8",
-  card2: "#F7EFE3",
+  card2: "#F6EBDD",
   border: "#E7D8C8",
 
-  amber: "#F56A00",
-  amber2: "#FFC48A",
+  // Brand accents
+  amber: "#FF6A00",
+  amber2: "#FFB36B",
   gold: "#C99A45",
-  teal: "#3F96AA",
+  teal: "#4FA3B5",
   green: "#0A4152",
   rose: "#B55A4B",
 
-  t1: "#2E211C",
-  t2: "#5A4038",
-  t3: "#71828B",
+  // Text
+  t1: "#33241F",
+  t2: "#655047",
+  t3: "#7A8B95",
 
+  // Light blue -> cream hero backgrounds
   hero1: "#FFF9F0",
   hero2: "#EEF3F4",
 };
 
 // Color palette used when the device is in dark mode.
 export const DARK_COLORS = {
-  // Main backgrounds
-  bg: "#131F2A", // crow feather / navy black
-  bg2: "#1E2E3A", // deepsea core
-  card: "#263E4C", // payneÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s gray
-  card2: "#2E404E", // deep blue-gray
-  border: "#4A5D68",
+  // Deep navy
+  bg: "#131F2A",
+  bg2: "#1A2A36",
+  card: "#21323F",
+  card2: "#2A3E4B",
+  border: "#38505E",
 
   // Brand accents
-  amber: "#FF7A05", // harvest orange
-  amber2: "#FFB36B", // warm peach-orange
-  gold: "#E9D09A", // champagne
-  teal: "#7AACBF", // sky reflection blue
-  green: "#0A4152", // midnight green
-  rose: "#9B4A1F", // saddle/ruddy brown
+  amber: "#FF7A05",
+  amber2: "#FFB36B",
+  gold: "#D8C3A5",
+  teal: "#7AACBF",
+  green: "#0A4152",
+  rose: "#C06A4C",
 
   // Text
-  t1: "#F9F3E7", // pearl text
-  t2: "#C8B8A5", // warm muted text
-  t3: "#8FA4B2", // muted blue-gray
+  t1: "#F8F2E8",
+  t2: "#D4C4B6",
+  t3: "#93A6B2",
 
-  // Hero gradient
+  // Navy hero backgrounds
   hero1: "#1E2E3A",
   hero2: "#131F2A",
 };
@@ -192,6 +196,7 @@ export const STORES: Store[] = [
     colors: ["#9B1C8E", "#6E1465"],
     tagline: "Value finds",
   },
+
   // {
   //   id: "boat",
   //   name: "boAt",
@@ -212,6 +217,7 @@ export const STORES: Store[] = [
   //   colors: ["#0A3D62", "#0A6CA8"],
   //   tagline: "Comfort wear",
   // },
+
   {
     id: "firstcry",
     name: "FirstCry",
