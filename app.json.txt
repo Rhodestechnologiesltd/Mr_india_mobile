@@ -22,10 +22,11 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/logos/Mr India Logo mobile.png"
+        "foregroundImage": "./assets/images/logos/Android Logo Adaptive.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "mrindia.mu.mobile"
+      "package": "mrindia.mu.mobile",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "output": "static",

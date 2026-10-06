@@ -311,9 +311,10 @@ const makeStyles = (COLORS: any) =>
       paddingHorizontal: 24,
 
       /*
-       * Leaves room for Previous / Skip.
+       * Leaves room for Previous / Skip while preserving
+       * enough vertical space for longer slide descriptions.
        */
-      paddingTop: 60,
+      paddingTop: 48,
     },
 
     /* ---------------------------------------------------------------------- */
@@ -325,11 +326,11 @@ const makeStyles = (COLORS: any) =>
       alignItems: "center",
       justifyContent: "center",
 
-      marginBottom: 22,
+      marginBottom: 14,
     },
 
     gifContainer: {
-      width: 268,
+      width: 220,
       aspectRatio: 384 / 832,
       borderRadius: 26,
       overflow: "hidden",
@@ -376,7 +377,7 @@ const makeStyles = (COLORS: any) =>
 
       textAlign: "center",
 
-      marginTop: 10,
+      marginTop: 8,
 
       paddingHorizontal: 14,
     },
@@ -394,7 +395,7 @@ const makeStyles = (COLORS: any) =>
 
       gap: 8,
 
-      marginBottom: 8,
+      marginBottom: 6,
     },
 
     dot: {
@@ -412,9 +413,9 @@ const makeStyles = (COLORS: any) =>
     footer: {
       paddingHorizontal: 24,
 
-      paddingTop: 10,
+      paddingTop: 6,
 
-      paddingBottom: 32,
+      paddingBottom: 22,
     },
 
     cta: {

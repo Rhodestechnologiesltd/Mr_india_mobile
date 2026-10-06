@@ -8,14 +8,14 @@ import { encode as base64Encode } from "base-64";
 
 // Point at your backend. For a phone on the same Wi-Fi, use your Mac's LAN IP
 //LIVE DATABSE API, MOBIKUL
-// export const API_BASE = "https://www.mrindia.mu";
-// const ODOO_DB = "dh_mr_india_test";
-// const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
+export const API_BASE = "https://www.mrindia.mu";
+const ODOO_DB = "dh_mr_india_test";
+const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
 
 //Local Host
-export const API_BASE = "http://192.168.100.205:8067";
-const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
-const MOBIKUL_API_KEY = "dummySecretKey";
+// export const API_BASE = "http://192.168.100.205:8067";
+// const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
+// const MOBIKUL_API_KEY = "dummySecretKey";
 
 // //Home IP
 //export const API_BASE = "http://192.168.100.21:8067";
@@ -71,8 +71,8 @@ export const LIGHT_COLORS = {
 
   // Text
   t1: "#33241F",
-  t2: "#655047",
-  t3: "#7A8B95",
+  t2: "#514039",
+  t3: "#5F707A",
 
   // Light blue -> cream hero backgrounds
   hero1: "#FFF9F0",
