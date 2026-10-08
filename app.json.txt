@@ -12,11 +12,7 @@
       "bundleIdentifier": "com.mrindia.mobile",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "NSLocalNetworkUsageDescription": "Mr India needs access to your local network to connect to the development server.",
-        "NSAppTransportSecurity": {
-          "NSAllowsLocalNetworking": true
-        }
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -51,14 +47,6 @@
         "@react-native-google-signin/google-signin",
         {
           "iosUrlScheme": "com.googleusercontent.apps.1040712934510-o0oosk1jv3lcb66fi9jm6mq3hcmpa1fd"
-        }
-      ],
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
         }
       ]
     ],
