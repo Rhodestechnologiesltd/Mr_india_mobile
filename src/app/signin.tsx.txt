@@ -40,7 +40,7 @@ import {
 } from "../lib/mrindia";
 
 // Load the local Mr India logo image.
-const MR_INDIA_LOGO = require("../../assets/images/logos/Mr.india.jpeg");
+const MR_INDIA_LOGO = require("../../assets/images/logos/MR India Logo.png");
 const GOOGLE_LOGO = require("../../assets/images/google/g-logo.png");
 
 // GoogleSignin.configure({
@@ -296,16 +296,10 @@ export default function SignIn() {
       if (mode === "up") {
         console.log("========== DIRECT REGISTRATION ==========");
 
-        const result = await api.register(
-          f.name.trim(),
-          email,
-          password,
-        );
+        const result = await api.register(f.name.trim(), email, password);
 
         if (result?.success !== true) {
-          throw new Error(
-            result?.message || "Unable to create account.",
-          );
+          throw new Error(result?.message || "Unable to create account.");
         }
 
         console.log("REGISTRATION SUCCESS");
@@ -1460,8 +1454,8 @@ const makeStyles = (COLORS: any) =>
     },
 
     logo: {
-      width: 200,
-      height: 105,
+      width: 220,
+      height: 110,
       borderRadius: 26,
       backgroundColor: "#FFFFFF",
       alignItems: "center",
@@ -1481,8 +1475,8 @@ const makeStyles = (COLORS: any) =>
     },
 
     logoImg: {
-      width: 160,
-      height: 82,
+      width: 220,
+      height: 100,
     },
     content: {
       paddingHorizontal: 24,

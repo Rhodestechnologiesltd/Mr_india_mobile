@@ -1,4 +1,4 @@
-﻿// src/app/browser.tsx - the core feature. Opens a real Indian store in a
+// src/app/browser.tsx - the core feature. Opens a real Indian store in a
 // WebView and injects a floating "Shop via Mr India" button. Tapping it scrapes
 // the product and adds it to the Mr India cart (you pay Mr India, not the store).
 import { Ionicons } from "@expo/vector-icons";
@@ -6,7 +6,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
+  BackHandler,
   Image,
   Modal,
   PanResponder,
@@ -22,6 +24,8 @@ import {
 } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { api, getColors, money, useStore } from "../lib/mrindia";
+import { AMAZON_ADAPTER_JS } from "../store-adapters/amazon";
+import { FLIPKART_ADAPTER_JS } from "../store-adapters/flipkart";
 
 // JavaScript injected into each store page to extract product details and block store checkout actions.
 
@@ -745,10 +749,10 @@ const INJECTED = `
        * Stop before promotional/bank-offer areas.
        *
        * We want:
-       * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,899  ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹691
+       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹691
        *
        * NOT:
-       * Buy at ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹591
+       * Buy at ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹591
        */
       var cutPoints = [
         productSectionLower.indexOf("apply offers"),
@@ -779,8 +783,8 @@ const INJECTED = `
        * Collect every rupee value in this CURRENT product section.
        *
        * Typical:
-       * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,899
-       * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹691
+       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899
+       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹691
        *
        * The last one before the offer section is the selling price.
        */
@@ -896,9 +900,9 @@ const INJECTED = `
         /*
          * Layout A:
          *
-         * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹2,499 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹746 70% OFF
+         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹2,499 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹746 70% OFF
          *
-         * use ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹746.
+         * use ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹746.
          */
         var discountedMatch = priceArea.match(
           /MRP\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -923,10 +927,10 @@ const INJECTED = `
         /*
          * Layout B:
          *
-         * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹589
+         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹589
          *
          * There is no separate discounted selling price.
-         * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹589 is therefore the normal product price.
+         * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹589 is therefore the normal product price.
          */
         var singleMrpMatch = priceArea.match(
           /MRP\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1042,11 +1046,11 @@ const INJECTED = `
      *
      * Typical live product page:
      *
-     * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹14,999 MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹19,999 25% off
+     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹14,999 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹19,999 25% off
      *
      * or
      *
-     * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹8,999 MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹11,999
+     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹8,999 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹11,999
      *
      * The first price is the actual selling price.
      */
@@ -1241,7 +1245,7 @@ const INJECTED = `
 
         /*
          * Layout:
-         * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹999 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹749
+         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹999 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹749
          */
         var mrpFirst = tx.match(
           /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1259,7 +1263,7 @@ const INJECTED = `
 
         /*
          * Layout:
-         * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹749 MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹999
+         * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹749 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹999
          */
         var priceFirst = tx.match(
           /\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?).{0,40}MRP\\s*:?\\s*\\u20B9/i
@@ -1524,7 +1528,7 @@ const INJECTED = `
       /*
        * Layout:
        *
-       * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,499 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹899
+       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,499 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
        */
       var mrpPair = sizeArea.match(
         /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1546,7 +1550,7 @@ const INJECTED = `
       /*
        * Layout:
        *
-       * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹899 MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,499
+       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,499
        */
       var sellingFirst = sizeArea.match(
         /\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?).{0,80}?MRP\\s*:?\\s*\\u20B9/i
@@ -1730,11 +1734,11 @@ const INJECTED = `
 
       /*
        * Layout:
-       * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,299
-       * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹899
+       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,299
+       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
        *
        * or:
-       * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,299 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹899
+       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,299 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
        */
       var prices = beforeSize.match(
         /\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?/g
@@ -1809,7 +1813,7 @@ const INJECTED = `
         }
 
         /*
-         * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1299 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹899
+         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1299 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
          */
         var pair = tx.match(
           /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1900,7 +1904,7 @@ const INJECTED = `
     /*
      * Anchor to the ACTIVE boAt variant area:
      *
-     * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,399 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹8,499.00 84% Off
+     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,399 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹8,499.00 84% Off
      * Choose your color : Dark Blue
      */
     var chooseIndex = lower.lastIndexOf(
@@ -2155,7 +2159,7 @@ const INJECTED = `
 
       /*
        * Typical Myntra text:
-       * MRP ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹1,899 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹733 61% OFF
+       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹733 61% OFF
        *
        * Capture the selling price after the MRP.
        */
@@ -2194,7 +2198,7 @@ const INJECTED = `
 
       /*
        * Common visible form:
-       * 7% ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹599 ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹558
+       * 7% ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹599 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹558
        *
        * Capture the current price after the MRP.
        */
@@ -2487,8 +2491,8 @@ const INJECTED = `
      * Nykaa variant buttons can contain text such as:
      *
      * 300ml
-     * ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹170
-     * (ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹0.6/ml)
+     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹170
+     * (ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹0.6/ml)
      *
      * The selected option is visually highlighted with Nykaa's
      * pink border. Read the individual visible option cards and
@@ -3346,7 +3350,7 @@ const INJECTED = `
         /*
          * A Meesho size card often looks like:
          *
-         * M ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹216
+         * M ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹216
          *
          * Split on spaces and examine the first token only.
          */
@@ -3644,10 +3648,10 @@ const INJECTED = `
 
       var boatColorMatch =
         boatBody.match(
-          /Choose your color\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|Ã¢â€šÂ¹))/i
+          /Choose your color\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹))/i
         ) ||
         boatBody.match(
-          /Choose your colour\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|Ã¢â€šÂ¹))/i
+          /Choose your colour\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹))/i
         );
 
       if(boatColorMatch && boatColorMatch[1]){
@@ -5709,7 +5713,7 @@ function findAuthButton(el){
        * touch sequence. Stop it here in capture phase before the
        * website can add the product to its own bag.
        */
-      if(isAjioPurchaseAction(e.target) || isIkeaPurchaseAction(e.target) || isFirstCryPurchaseAction(e.target) || isBoatPurchaseAction(e.target) || isNykaaPurchaseAction(e.target) || isMyntraPurchaseAction(e.target)){
+      if(isAjioPurchaseAction(e.target) || isIkeaPurchaseAction(e.target) || isFirstCryPurchaseAction(e.target) || isBoatPurchaseAction(e.target) || isNykaaPurchaseAction(e.target) || isMyntraPurchaseAction(e.target) || isFlipkartPurchaseAction(e.target)){
         e.preventDefault();
         e.stopPropagation();
 
@@ -5809,7 +5813,7 @@ function findAuthButton(el){
 
         if(
           label === "x" ||
-          label === "ÃƒÆ’Ã¢â‚¬â€" ||
+          label === "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" ||
           label === "close" ||
           label.indexOf("close") >= 0
         ){
@@ -5880,6 +5884,11 @@ export default function Browser() {
   const webRef = useRef<WebView>(null);
   const warningTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(false);
+
+  // Keep WebView history inside the selected store.
+  const canWebGoBackRef = useRef(false);
+  const activeWebUrlRef = useRef(String(url || ""));
+  const storeHomeUrlRef = useRef(String(url || ""));
 
   const sheetTranslateY = useRef(new Animated.Value(0)).current;
 
@@ -5953,12 +5962,67 @@ export default function Browser() {
   useEffect(() => {
     if (!isMountedRef.current) return;
 
+    const nextStoreHome = String(url || "");
+
+    storeHomeUrlRef.current = nextStoreHome;
+    activeWebUrlRef.current = nextStoreHome;
+    canWebGoBackRef.current = false;
+
     setInitialLoading(true);
     setPending(null);
-    setCurrentUrl(String(url || ""));
+    setCurrentUrl(nextStoreHome);
     setShowGuide(true);
     setIsStoreCartPage(false);
   }, [url]);
+
+  // Android hardware Back navigates inside the current store first.
+  // It must not accidentally exit the browser back to Mr India.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (canWebGoBackRef.current) {
+          webRef.current?.goBack();
+          return true;
+        }
+
+        const storeHome = storeHomeUrlRef.current;
+        const activeUrl = activeWebUrlRef.current;
+
+        /*
+         * Some store pages can replace their own history entry.
+         * If that happens, explicitly return to the original
+         * store home instead of leaving the Mr India browser.
+         */
+        if (storeHome && activeUrl && activeUrl !== storeHome) {
+          webRef.current?.injectJavaScript(
+            `
+            try {
+              window.location.href = ${JSON.stringify(storeHome)};
+            } catch (e) {}
+            true;
+          `.replace('"PLACEHOLDER"', JSON.stringify(storeHome)),
+          );
+
+          return true;
+        }
+
+        /*
+         * Already at the selected store home.
+         * Consume the Android Back action so it does not
+         * unexpectedly return to the Mr India home screen.
+         *
+         * The visible "< Back" header button remains the
+         * explicit way to leave the store browser.
+         */
+        return true;
+      },
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   // Prevent the full-page loading overlay from remaining visible indefinitely.
   useEffect(() => {
@@ -5990,7 +6054,7 @@ export default function Browser() {
       if (isMountedRef.current) {
         setIsStoreCartPage(false);
       }
-    }, 3000);
+    }, 5000);
   }, []);
 
   // Temporarily warn the shopper after a store authentication action is blocked.
@@ -6019,8 +6083,41 @@ export default function Browser() {
   function scrapeCurrentPage() {
     webRef.current?.injectJavaScript(`
     try {
-      if (window.__miScrape) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(window.__miScrape()));
+      var host = String(location.hostname || "").toLowerCase();
+
+      if (
+        host.indexOf("amazon") >= 0 &&
+        window.__miAmazonAdapter &&
+        window.__miAmazonAdapter.scrape
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miAmazonAdapter.scrape())
+        );
+      } else if (
+        host.indexOf("flipkart") >= 0 &&
+        window.__miFlipkartAdapter &&
+        window.__miFlipkartAdapter.scrape
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miFlipkartAdapter.scrape())
+        );
+      } else if (host.indexOf("flipkart") >= 0) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          adapter: "flipkart",
+          store: "Flipkart",
+          name: document.title || "Flipkart product",
+          inr: 0,
+          image: "",
+          link: location.href,
+          options: "",
+          __flipkartDebug: {
+            error: "Flipkart adapter unavailable"
+          }
+        }));
+      } else if (window.__miScrape) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miScrape())
+        );
       } else {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           name: document.querySelector("#productTitle")?.textContent?.trim() || document.querySelector("h1")?.textContent?.trim() || document.title || "Product",
@@ -6072,6 +6169,31 @@ export default function Browser() {
         console.log("========== AJIO PRICE DEBUG ==========");
         console.log(JSON.stringify(p.__ajioDebug, null, 2));
       }
+
+      if (p?.__flipkartDebug) {
+        console.log("========== FLIPKART PRICE DEBUG ==========");
+        console.log(JSON.stringify(p.__flipkartDebug, null, 2));
+      }
+
+      if (p?.__amazonColorDebug) {
+        console.log("========== AMAZON COLOR DEBUG ==========");
+        console.log(JSON.stringify(p.__amazonColorDebug, null, 2));
+      }
+
+      if (
+        (p?.adapter === "flipkart" || p?.adapter === "amazon") &&
+        p?.stockStatus?.blocked === true
+      ) {
+        console.log("FLIPKART STOCK BLOCKED:", p.stockStatus);
+        setPending(null);
+        Alert.alert(
+          "Selection unavailable",
+          p.stockStatus.message ||
+            "Please select an available product variant on Flipkart."
+        );
+        return;
+      }
+
       const sourcePrice = Number(p.inr || 0);
 
       if (!sourcePrice) {
@@ -6116,6 +6238,15 @@ export default function Browser() {
   }
 
   function confirmAdd() {
+    if (
+      !pending ||
+      Number(pending.sourcePrice || 0) <= 0 ||
+      Number(pending.displayPrice || 0) <= 0
+    ) {
+      console.log("CART BLOCKED: invalid price");
+      return;
+    }
+
     const options = String(pending?.options || "").trim();
 
     /*
@@ -6128,7 +6259,7 @@ export default function Browser() {
      * sale.order.line.
      */
     const sizeMatch = options.match(
-      /Size:\s*(.*?)(?:\s+(?:-|Ãƒâ€šÃ‚Â·|\|)\s+Color:|$)/i,
+      /Size:\s*(.*?)(?:\s+(?:-|ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·|\|)\s+Color:|$)/i,
     );
 
     const colorMatch = options.match(/Color:\s*(.*)$/i);
@@ -6210,7 +6341,18 @@ export default function Browser() {
           ref={webRef}
           style={st.web}
           source={{ uri: currentUrl }}
-          injectedJavaScript={INJECTED}
+          injectedJavaScript={`
+            ${INJECTED}
+            if (location.hostname.toLowerCase().indexOf("amazon") >= 0) {
+              ${AMAZON_ADAPTER_JS}
+            }
+
+            if (location.hostname.toLowerCase().indexOf("flipkart") >= 0) {
+              ${FLIPKART_ADAPTER_JS}
+            }
+
+            true;
+          `}
           onMessage={onMessage}
           onShouldStartLoadWithRequest={(req) => {
             const u = req.url.toLowerCase();
@@ -6263,6 +6405,9 @@ export default function Browser() {
             }, 300);
           }}
           onNavigationStateChange={(nav) => {
+            canWebGoBackRef.current = nav.canGoBack;
+            activeWebUrlRef.current = nav.url;
+
             webRef.current?.injectJavaScript(INJECTED);
 
             const u = nav.url.toLowerCase();
@@ -6290,16 +6435,10 @@ export default function Browser() {
           javaScriptEnabled
           domStorageEnabled
           cacheEnabled
+          allowsBackForwardNavigationGestures
           setSupportMultipleWindows={false}
         />
 
-        {/* Full-page indicator shown while the store initially loads. */}
-        {initialLoading && (
-          <View style={st.fullLoader}>
-            <ActivityIndicator color={COLORS.amber} size="large" />
-            <Text style={st.loadingText}>Loading {name || "store"}...</Text>
-          </View>
-        )}
 
         {/* Dismissible instructions explaining how to shop through Mr India. */}
         {showGuide && (
@@ -6341,35 +6480,47 @@ export default function Browser() {
           </View>
         )}
 
+        {isStoreCartPage && (
+          <View style={st.warningPopup}>
+            <View style={st.warningPopupIcon}>
+              <Ionicons name="warning-outline" size={24} color="#FFFFFF" />
+            </View>
+
+            <Text style={st.warningPopupTxt}>{browserWarning}</Text>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setIsStoreCartPage(false)}
+              style={st.warningPopupClose}
+            >
+              <Ionicons name="close" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Persistent action area for warnings or the Mr India purchase button. */}
         <View
           style={[st.actionBar, { paddingBottom: Math.max(insets.bottom, 12) }]}
         >
-          {isStoreCartPage ? (
-            <View style={st.cartWarning}>
-              <Text style={st.cartWarningTxt}>{browserWarning}</Text>
-            </View>
-          ) : (
-            <>
-              {showGuide && (
-                <View style={st.actionMiniGuide}>
-                  <Text style={st.actionHint}>Found the product?</Text>
-                  <Text style={st.actionSub}>
-                    Select size/color on the store page, then add it through Mr
-                    India.
-                  </Text>
-                </View>
-              )}
+          <>
+            {showGuide && (
+              <View style={st.actionMiniGuide}>
+                <Text style={st.actionHint}>Found the product?</Text>
+                <Text style={st.actionSub}>
+                  Select size/color on the store page, then add it through Mr
+                  India.
+                </Text>
+              </View>
+            )}
 
-              <TouchableOpacity
-                activeOpacity={0.9}
-                style={st.actionBtn}
-                onPress={scrapeCurrentPage}
-              >
-                <Text style={st.actionBtnTxt}>Shop via Mr India</Text>
-              </TouchableOpacity>
-            </>
-          )}
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={st.actionBtn}
+              onPress={scrapeCurrentPage}
+            >
+              <Text style={st.actionBtnTxt}>Shop via Mr India</Text>
+            </TouchableOpacity>
+          </>
         </View>
 
         <Modal
@@ -6438,7 +6589,26 @@ export default function Browser() {
                   the product being purchased and cannot be changed later.
                 </Text>
               </View>
-              <TouchableOpacity style={st.cta} onPress={confirmAdd}>
+              {pending && (!pending.sourcePrice || !pending.displayPrice) && (
+                <Text style={st.meta}>
+                  Price unavailable or conversion failed.
+                  Please retry after the page finishes loading.
+                </Text>
+              )}
+              <TouchableOpacity
+                style={[
+                  st.cta,
+                  pending &&
+                    (!pending.sourcePrice || !pending.displayPrice) &&
+                    { opacity: 0.5 },
+                ]}
+                disabled={
+                  !pending ||
+                  !pending.sourcePrice ||
+                  !pending.displayPrice
+                }
+                onPress={confirmAdd}
+              >
                 {/* <Text style={st.ctaTxt}>Add to Mr India cart -></Text> */}
                 <Text style={st.ctaTxt}>Add to Mr India Cart</Text>
               </TouchableOpacity>
@@ -6760,21 +6930,70 @@ const makeStyles = (COLORS: any) =>
       letterSpacing: -0.2,
     },
 
-    cartWarning: {
-      backgroundColor: COLORS.card,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: COLORS.border,
-      padding: 14,
+    warningPopup: {
+      position: "absolute",
+      top: 82,
+      left: 14,
+      right: 14,
+      zIndex: 150,
+      elevation: 24,
+
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+
+      backgroundColor: "#FF5A1F",
+      borderRadius: 18,
+      borderWidth: 2,
+      borderColor: "#FFD2C2",
+
+      paddingVertical: 14,
+      paddingLeft: 14,
+      paddingRight: 10,
+
+      shadowColor: "#000",
+      shadowOpacity: 0.3,
+      shadowRadius: 16,
+      shadowOffset: {
+        width: 0,
+        height: 8,
+      },
     },
 
-    cartWarningTxt: {
-      color: COLORS.t2,
-      fontSize: 13,
-      lineHeight: 20,
-      textAlign: "center",
-      fontWeight: "700",
+    warningPopupIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: "rgba(255,255,255,0.20)",
+      alignItems: "center",
+      justifyContent: "center",
     },
+
+    warningPopupTxt: {
+      flex: 1,
+      color: "#FFFFFF",
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: "900",
+    },
+
+    warningPopupClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: "rgba(0,0,0,0.18)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    warningPopupCloseTxt: {
+      color: "#FFFFFF",
+      fontSize: 26,
+      lineHeight: 28,
+      fontWeight: "600",
+      marginTop: -2,
+    },
+
     sheetTitleRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -6812,10 +7031,3 @@ const makeStyles = (COLORS: any) =>
       fontWeight: "600",
     },
   });
-
-
-
-
-
-
-

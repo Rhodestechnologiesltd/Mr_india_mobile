@@ -2,12 +2,12 @@
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-    Animated,
-    Image,
-    StyleSheet,
-    Text,
-    useColorScheme,
-    View,
+  Animated,
+  Image,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getColors, useStore } from "../lib/mrindia";
@@ -55,12 +55,12 @@ export default function Splash() {
     ]).start();
 
     // Mark the splash animation as finished.
-  const t = setTimeout(() => {
-    setSplashDone(true);
-  }, 2600);
+    const t = setTimeout(() => {
+      setSplashDone(true);
+    }, 2600);
 
-  // Cancel the timer if the screen unmounts early.
-  return () => clearTimeout(t);
+    // Cancel the timer if the screen unmounts early.
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -100,10 +100,6 @@ export default function Splash() {
           <View style={s.logoCard}>
             <Image source={MR_INDIA_LOGO} style={s.logo} resizeMode="contain" />
           </View>
-
-          <Text style={s.brand}>
-            Mr <Text style={{ color: COLORS.amber }}>India</Text>
-          </Text>
 
           <Text style={s.tagline}>PREMIUM INDIA SHOPPING</Text>
 
@@ -165,8 +161,8 @@ const makeStyles = (COLORS: any) =>
     },
 
     logo: {
-      width: 190,
-      height: 92,
+      width: 220,
+      height: 100,
     },
 
     brand: {
@@ -212,4 +208,3 @@ const makeStyles = (COLORS: any) =>
       textAlign: "center",
     },
   });
-

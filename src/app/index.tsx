@@ -14,7 +14,7 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 //import { api, getColors, GRAD, money, STORES } from "../lib/mrindia";
@@ -220,9 +220,9 @@ export default function Home() {
                 />
               </View>
 
-              <Text style={s.brand}>
+              {/* <Text style={s.brand}>
                 Mr <Text style={{ color: COLORS.amber }}>India</Text>
-              </Text>
+              </Text> */}
 
               <View style={{ flex: 1 }} />
 
@@ -373,7 +373,9 @@ export default function Home() {
                 <Ionicons name="flash" size={18} color={COLORS.amber} />
                 <Text style={s.guideTitle}>Express</Text>
                 <Text style={s.guidePrice}>
-                  {pricingLoading ? "Loading..." : money(Number(odooPricing?.express_shipping?.price || 0))}
+                  {pricingLoading
+                    ? "Loading..."
+                    : money(Number(odooPricing?.express_shipping?.price || 0))}
                 </Text>
                 <Text style={s.guideMeta}>per product - ~7 days</Text>
               </View>
@@ -381,7 +383,9 @@ export default function Home() {
                 <Ionicons name="boat" size={18} color={COLORS.teal} />
                 <Text style={s.guideTitle}>Standard</Text>
                 <Text style={s.guidePrice}>
-                  {pricingLoading ? "Loading..." : money(Number(odooPricing?.standard_shipping?.price || 0))}
+                  {pricingLoading
+                    ? "Loading..."
+                    : money(Number(odooPricing?.standard_shipping?.price || 0))}
                 </Text>
                 <Text style={s.guideMeta}>per product - ~2 weeks</Text>
               </View>
@@ -392,7 +396,11 @@ export default function Home() {
                 electronics
               </Text>
               <Text style={s.eligibleTxt}>
-                Optional product verification: {pricingLoading ? "Loading..." : money(Number(odooPricing?.verification_fee?.price || 0))}/product
+                Optional product verification:{" "}
+                {pricingLoading
+                  ? "Loading..."
+                  : money(Number(odooPricing?.verification_fee?.price || 0))}
+                /product
               </Text>
             </View>
           </View>
@@ -576,8 +584,8 @@ const makeStyles = (COLORS: any) =>
     guideLinkTxt: { color: COLORS.amber, fontWeight: "700", fontSize: 14 },
 
     brandLogoWrap: {
-      width: 58,
-      height: 42,
+      width: 80,
+      height: 52,
       borderRadius: 14,
       backgroundColor: "#FFFFFF",
       alignItems: "center",
@@ -594,8 +602,8 @@ const makeStyles = (COLORS: any) =>
     },
 
     brandLogo: {
-      width: 52,
-      height: 38,
+      width: 78,
+      height: 48,
     },
 
     storeCard: {
