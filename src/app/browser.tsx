@@ -12,6 +12,7 @@ import {
   Image,
   Modal,
   PanResponder,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -26,9 +27,259 @@ import { WebView } from "react-native-webview";
 import { api, getColors, money, useStore } from "../lib/mrindia";
 import { AMAZON_ADAPTER_JS } from "../store-adapters/amazon";
 import { FLIPKART_ADAPTER_JS } from "../store-adapters/flipkart";
+import { MYNTRA_ADAPTER_JS } from "../store-adapters/myntra";
+import { AJIO_ADAPTER_JS } from "../store-adapters/ajio";
 
 // JavaScript injected into each store page to extract product details and block store checkout actions.
 
+/*
+ * MYNTRA_PURCHASE_GUARD_V1
+ * Prevent Myntra's own purchasing actions before its handlers run.
+ * Leave size, colour, navigation and other stores unchanged.
+ */
+/*
+ * MYNTRA_BUTTON_OVERLAY_V4
+ * Cover Myntra purchase buttons with an independent blocking layer.
+ * Store navigation and variant controls remain untouched.
+ */
+const MYNTRA_EARLY_GUARD_JS = String.raw`
+(function () {
+  if (!/(^|\.)myntra\.com$/i.test(location.hostname)) return;
+  if (window.__miMyntraOverlayV4) return;
+  window.__miMyntraOverlayV4 = true;
+
+  var covers = [];
+  var lastWarning = 0;
+  var scanning = false;
+
+  function clean(v) {
+    return String(v || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function isPurchaseLabel(v) {
+    return /^(add to bag|go to bag|add to cart|go to cart|buy now|checkout|proceed to checkout)$/.test(clean(v));
+  }
+
+  function warn(event) {
+    if (event) {
+      if (event.cancelable) event.preventDefault();
+      event.stopPropagation();
+      if (event.stopImmediatePropagation) {
+        event.stopImmediatePropagation();
+      }
+    }
+
+    var now = Date.now();
+    if (now - lastWarning < 1200) return;
+    lastWarning = now;
+
+    try {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: "STORE_CART_DETECTED",
+        reason: "myntra-purchase-overlay-v4"
+      }));
+    } catch (e) {}
+  }
+
+  function buttonFor(label) {
+    var node = label;
+    var best = label;
+
+    for (var i = 0; node && i < 5; i++) {
+      if (node === document.body) break;
+
+      var rect = node.getBoundingClientRect();
+      var text = clean(node.innerText || node.textContent);
+
+      if (
+        rect.width > 40 &&
+        rect.height >= 18 &&
+        rect.height <= 105 &&
+        rect.width <= window.innerWidth &&
+        text.length <= 65
+      ) {
+        best = node;
+      }
+
+      if (
+        node.tagName === "BUTTON" ||
+        node.tagName === "A" ||
+        node.getAttribute("role") === "button"
+      ) {
+        if (text.length <= 65) return node;
+      }
+
+      node = node.parentElement;
+    }
+
+    return best;
+  }
+
+  function clearCovers() {
+    for (var i = 0; i < covers.length; i++) {
+      covers[i].remove();
+    }
+    covers = [];
+  }
+
+  function scan() {
+    if (scanning || !document.body) return;
+    scanning = true;
+
+    try {
+      clearCovers();
+
+      var nodes = document.querySelectorAll(
+        "button, a, div, span, [role='button']"
+      );
+
+      var covered = [];
+
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+
+        if (node.closest("[data-mi-purchase-cover]")) continue;
+
+        var text = clean(node.innerText || node.textContent);
+        var aria = clean(node.getAttribute("aria-label"));
+
+        if (!isPurchaseLabel(text) && !isPurchaseLabel(aria)) {
+          continue;
+        }
+
+        // Prefer the smallest node containing the label.
+        var childMatches = false;
+
+        for (var j = 0; j < node.children.length; j++) {
+          if (isPurchaseLabel(
+            node.children[j].innerText ||
+            node.children[j].textContent
+          )) {
+            childMatches = true;
+            break;
+          }
+        }
+
+        if (childMatches) continue;
+
+        var button = buttonFor(node);
+        var rect = button.getBoundingClientRect();
+
+        if (
+          rect.width < 40 ||
+          rect.height < 18 ||
+          rect.height > 105 ||
+          rect.bottom <= 0 ||
+          rect.top >= window.innerHeight
+        ) continue;
+
+        var duplicate = false;
+        for (var k = 0; k < covered.length; k++) {
+          var old = covered[k];
+          if (
+            Math.abs(old.left - rect.left) < 4 &&
+            Math.abs(old.top - rect.top) < 4
+          ) {
+            duplicate = true;
+            break;
+          }
+        }
+        if (duplicate) continue;
+        covered.push(rect);
+
+        var cover = document.createElement("div");
+        cover.setAttribute("data-mi-purchase-cover", "true");
+
+        cover.style.cssText =
+          "position:fixed !important;" +
+          "left:" + rect.left + "px !important;" +
+          "top:" + rect.top + "px !important;" +
+          "width:" + rect.width + "px !important;" +
+          "height:" + rect.height + "px !important;" +
+          "z-index:2147483647 !important;" +
+          "pointer-events:auto !important;" +
+          "touch-action:manipulation !important;" +
+          "background:rgba(255,255,255,0.12) !important;" +
+          "border-radius:6px !important;";
+
+        [
+          "pointerdown",
+          "pointerup",
+          "touchstart",
+          "touchend",
+          "mousedown",
+          "mouseup",
+          "click"
+        ].forEach(function(name) {
+          cover.addEventListener(name, function(event) {
+            if (name === "touchstart" || name === "pointerdown" || name === "click") warn(event);
+            else {
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.stopImmediatePropagation) {
+                event.stopImmediatePropagation();
+              }
+            }
+          }, { capture: true, passive: false });
+        });
+
+        document.documentElement.appendChild(cover);
+        covers.push(cover);
+      }
+    } catch (e) {
+    } finally {
+      scanning = false;
+    }
+  }
+
+  var scheduled = false;
+  function scheduleScan() {
+    if (scheduled) return;
+    scheduled = true;
+
+    setTimeout(function() {
+      scheduled = false;
+      scan();
+    }, 120);
+  }
+
+  document.addEventListener("scroll", scheduleScan, true);
+  window.addEventListener("resize", scheduleScan);
+
+  function start() {
+    scan();
+
+    var observer = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var target = mutations[i].target;
+        if (
+          target.nodeType === 1 &&
+          target.closest &&
+          target.closest("[data-mi-purchase-cover]")
+        ) continue;
+
+        scheduleScan();
+        return;
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    setInterval(scan, 1000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    start();
+  }
+})();
+true;
+`;
 const INJECTED = `
 (function(){
 
@@ -749,10 +1000,10 @@ const INJECTED = `
        * Stop before promotional/bank-offer areas.
        *
        * We want:
-       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹691
+       * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,899  ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹691
        *
        * NOT:
-       * Buy at ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹591
+       * Buy at ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹591
        */
       var cutPoints = [
         productSectionLower.indexOf("apply offers"),
@@ -783,8 +1034,8 @@ const INJECTED = `
        * Collect every rupee value in this CURRENT product section.
        *
        * Typical:
-       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899
-       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹691
+       * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,899
+       * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹691
        *
        * The last one before the offer section is the selling price.
        */
@@ -900,9 +1151,9 @@ const INJECTED = `
         /*
          * Layout A:
          *
-         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹2,499 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹746 70% OFF
+         * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹2,499 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹746 70% OFF
          *
-         * use ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹746.
+         * use ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹746.
          */
         var discountedMatch = priceArea.match(
           /MRP\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -927,10 +1178,10 @@ const INJECTED = `
         /*
          * Layout B:
          *
-         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹589
+         * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹589
          *
          * There is no separate discounted selling price.
-         * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹589 is therefore the normal product price.
+         * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹589 is therefore the normal product price.
          */
         var singleMrpMatch = priceArea.match(
           /MRP\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1046,11 +1297,11 @@ const INJECTED = `
      *
      * Typical live product page:
      *
-     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹14,999 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹19,999 25% off
+     * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹14,999 MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹19,999 25% off
      *
      * or
      *
-     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹8,999 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹11,999
+     * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹8,999 MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹11,999
      *
      * The first price is the actual selling price.
      */
@@ -1245,7 +1496,7 @@ const INJECTED = `
 
         /*
          * Layout:
-         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹999 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹749
+         * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹999 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹749
          */
         var mrpFirst = tx.match(
           /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1263,7 +1514,7 @@ const INJECTED = `
 
         /*
          * Layout:
-         * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹749 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹999
+         * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹749 MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹999
          */
         var priceFirst = tx.match(
           /\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?).{0,40}MRP\\s*:?\\s*\\u20B9/i
@@ -1528,7 +1779,7 @@ const INJECTED = `
       /*
        * Layout:
        *
-       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,499 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
+       * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,499 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹899
        */
       var mrpPair = sizeArea.match(
         /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1550,7 +1801,7 @@ const INJECTED = `
       /*
        * Layout:
        *
-       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899 MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,499
+       * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹899 MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,499
        */
       var sellingFirst = sizeArea.match(
         /\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?).{0,80}?MRP\\s*:?\\s*\\u20B9/i
@@ -1734,11 +1985,11 @@ const INJECTED = `
 
       /*
        * Layout:
-       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,299
-       * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
+       * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,299
+       * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹899
        *
        * or:
-       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,299 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
+       * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,299 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹899
        */
       var prices = beforeSize.match(
         /\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?/g
@@ -1813,7 +2064,7 @@ const INJECTED = `
         }
 
         /*
-         * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1299 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹899
+         * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1299 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹899
          */
         var pair = tx.match(
           /MRP\\s*:?\\s*\\u20B9\\s*[\\d,]+(?:\\.\\d{1,2})?\\s*\\u20B9\\s*([\\d,]+(?:\\.\\d{1,2})?)/i
@@ -1904,7 +2155,7 @@ const INJECTED = `
     /*
      * Anchor to the ACTIVE boAt variant area:
      *
-     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,399 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹8,499.00 84% Off
+     * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,399 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹8,499.00 84% Off
      * Choose your color : Dark Blue
      */
     var chooseIndex = lower.lastIndexOf(
@@ -2159,7 +2410,7 @@ const INJECTED = `
 
       /*
        * Typical Myntra text:
-       * MRP ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹1,899 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹733 61% OFF
+       * MRP ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹1,899 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹733 61% OFF
        *
        * Capture the selling price after the MRP.
        */
@@ -2198,7 +2449,7 @@ const INJECTED = `
 
       /*
        * Common visible form:
-       * 7% ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹599 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹558
+       * 7% ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹599 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹558
        *
        * Capture the current price after the MRP.
        */
@@ -2491,8 +2742,8 @@ const INJECTED = `
      * Nykaa variant buttons can contain text such as:
      *
      * 300ml
-     * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹170
-     * (ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹0.6/ml)
+     * ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹170
+     * (ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹0.6/ml)
      *
      * The selected option is visually highlighted with Nykaa's
      * pink border. Read the individual visible option cards and
@@ -3350,7 +3601,7 @@ const INJECTED = `
         /*
          * A Meesho size card often looks like:
          *
-         * M ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹216
+         * M ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹216
          *
          * Split on spaces and examine the first token only.
          */
@@ -3648,10 +3899,10 @@ const INJECTED = `
 
       var boatColorMatch =
         boatBody.match(
-          /Choose your color\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹))/i
+          /Choose your color\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹))/i
         ) ||
         boatBody.match(
-          /Choose your colour\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹))/i
+          /Choose your colour\\s*:\\s*([A-Za-z0-9 &\\-]+?)(?=\\s+(?:Active Black|Onyx Black|Zinc White|Inclusive of all|Check Delivery|Add To Cart|Buy Now|ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹))/i
         );
 
       if(boatColorMatch && boatColorMatch[1]){
@@ -5552,20 +5803,31 @@ function findAuthButton(el){
 
     return false;
   }
+  // Myntra only: block real purchase controls, not size or colour controls.
   function isMyntraPurchaseAction(el){
-    var h = location.hostname.toLowerCase();
-
-    if(h.indexOf("myntra") < 0){
-      return false;
-    }
+    var h = String(location.hostname || "").toLowerCase();
+    if (h.indexOf("myntra.com") < 0) return false;
 
     var depth = 0;
 
-    while(el && el !== document.body && depth < 12){
-      var text = cleanClickText(
-        el.innerText ||
-        el.textContent ||
-        ""
+    while (el && el !== document.body && depth < 8) {
+      var tag = String(el.tagName || "").toLowerCase();
+      var role = cleanClickText(
+        (el.getAttribute && el.getAttribute("role")) || ""
+      );
+
+      var type = cleanClickText(
+        (el.getAttribute && el.getAttribute("type")) || ""
+      );
+
+      if (
+        type === "search" ||
+        role === "search" ||
+        role === "searchbox"
+      ) return false;
+
+      var cls = cleanClickText(
+        (el.getAttribute && el.getAttribute("class")) || ""
       );
 
       var aria = cleanClickText(
@@ -5576,41 +5838,36 @@ function findAuthButton(el){
         (el.getAttribute && el.getAttribute("title")) || ""
       );
 
-      var value = cleanClickText(
-        (el.getAttribute && el.getAttribute("value")) || ""
+      var testid = cleanClickText(
+        (el.getAttribute && el.getAttribute("data-testid")) || ""
       );
 
-      var combined = cleanClickText(
-        text + " " +
-        aria + " " +
-        title + " " +
-        value
+      var visible = cleanClickText(
+        el.innerText || el.textContent || ""
       );
 
-      /*
-       * Do not interfere with size/colour selection.
-       */
-      if(
-        combined === "xs" ||
-        combined === "s" ||
-        combined === "m" ||
-        combined === "l" ||
-        combined === "xl" ||
-        combined === "xxl" ||
-        combined === "xxxl"
-      ){
-        return false;
-      }
+      // Ignore large containers containing several controls.
+      if (visible.length > 65) visible = "";
 
-      if(
-        combined === "add to bag" ||
-        combined === "go to bag" ||
-        combined === "buy now" ||
-        combined.indexOf("add to bag") >= 0 ||
-        combined.indexOf("go to bag") >= 0 ||
-        combined.indexOf("buy now") >= 0
-      ){
-        return true;
+      var interactive =
+        tag === "button" ||
+        tag === "a" ||
+        tag === "input" ||
+        role === "button" ||
+        cls.indexOf("add-to-bag") >= 0 ||
+        cls.indexOf("addtobag") >= 0 ||
+        cls.indexOf("pdp-add-to-bag") >= 0;
+
+      if (interactive) {
+        var combined = cleanClickText(
+          visible + " " + aria + " " +
+          title + " " + testid + " " + cls
+        );
+
+        var purchase =
+          /add to bag|add-to-bag|addtobag|go to bag|go-to-bag|gotobag|buy now|checkout/.test(combined);
+
+        if (purchase) return true;
       }
 
       el = el.parentElement;
@@ -5619,7 +5876,6 @@ function findAuthButton(el){
 
     return false;
   }
-
   function findClickedButton(el){
     if(isSafeProductNavigation(el)){
       return false;
@@ -5666,7 +5922,7 @@ function findAuthButton(el){
   // Stop store authentication and purchasing actions before the website handles them.
  function blockStoreCartAction(e){
   var clickedAuthButton = isBoatAuthAction(e.target) || findAuthButton(e.target);
-  var clickedAddButton = isAjioPurchaseAction(e.target) || isIkeaPurchaseAction(e.target) || isFirstCryPurchaseAction(e.target) || isBoatPurchaseAction(e.target) || isNykaaPurchaseAction(e.target) || isMyntraPurchaseAction(e.target) || isFlipkartPurchaseAction(e.target) || findClickedButton(e.target);
+  var clickedAddButton = isAjioPurchaseAction(e.target) || isIkeaPurchaseAction(e.target) || isFirstCryPurchaseAction(e.target) || isBoatPurchaseAction(e.target) || isNykaaPurchaseAction(e.target) || isMyntraPurchaseAction(e.target) || isFlipkartPurchaseAction(e.target) || (location.hostname.toLowerCase().indexOf("myntra") < 0 && findClickedButton(e.target));
 
   if(clickedAuthButton || clickedAddButton){
     try{
@@ -5813,7 +6069,7 @@ function findAuthButton(el){
 
         if(
           label === "x" ||
-          label === "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" ||
+          label === "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â" ||
           label === "close" ||
           label.indexOf("close") >= 0
         ){
@@ -5861,6 +6117,15 @@ function findAuthButton(el){
   }
   window.__miScrape = scrape;
 
+  // Catch Myntra's early pointer events before its React handlers.
+  document.addEventListener("pointerdown", function(e){
+    if (isMyntraPurchaseAction(e.target)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      notifyBlockedOnce();
+    }
+  }, true);
   document.addEventListener("touchstart", onTouchStart, true);
   document.addEventListener("touchend", onTouchEnd, true);
   document.addEventListener("click", blockStoreCartAction, true);
@@ -6101,6 +6366,33 @@ export default function Browser() {
         window.ReactNativeWebView.postMessage(
           JSON.stringify(window.__miFlipkartAdapter.scrape())
         );
+      } else if (
+        host.indexOf("myntra") >= 0 &&
+        window.__miMyntraAdapter &&
+        window.__miMyntraAdapter.scrape
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miMyntraAdapter.scrape())
+        );
+      } else if (
+        /(^|\.)ajio\.com$/i.test(location.hostname) &&
+        window.__miAjioAdapter &&
+        typeof window.__miAjioAdapter.scrape === "function"
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miAjioAdapter.scrape())
+        );
+      } else if (host.indexOf("ajio") >= 0) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          adapter: "ajio",
+          store: "AJIO",
+          inr: 0,
+          stockStatus: {
+            blocked: true,
+            reason: "adapter-unavailable",
+            message: "AJIO product details are not ready. Please wait for the page to load and try again."
+          }
+        }));
       } else if (host.indexOf("flipkart") >= 0) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           adapter: "flipkart",
@@ -6112,6 +6404,17 @@ export default function Browser() {
           options: "",
           __flipkartDebug: {
             error: "Flipkart adapter unavailable"
+          }
+        }));
+      } else if (host.indexOf("myntra") >= 0) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          adapter: "myntra",
+          store: "Myntra",
+          inr: 0,
+          stockStatus: {
+            blocked: true,
+            reason: "adapter-unavailable",
+            message: "Myntra product details are not ready. Please wait for the page to finish loading and try again."
           }
         }));
       } else if (window.__miScrape) {
@@ -6175,21 +6478,34 @@ export default function Browser() {
         console.log(JSON.stringify(p.__flipkartDebug, null, 2));
       }
 
+      if (p?.__myntraDebug) {
+        console.log("========== MYNTRA DEBUG ==========");
+        console.log(JSON.stringify(p.__myntraDebug, null, 2));
+        console.log("MYNTRA PRODUCT:", {
+          name: p.name,
+          inr: p.inr,
+          image: p.image,
+          size: p.size,
+          color: p.color,
+          options: p.options,
+          stockStatus: p.stockStatus,
+        });
+      }
       if (p?.__amazonColorDebug) {
         console.log("========== AMAZON COLOR DEBUG ==========");
         console.log(JSON.stringify(p.__amazonColorDebug, null, 2));
       }
 
       if (
-        (p?.adapter === "flipkart" || p?.adapter === "amazon") &&
+        (p?.adapter === "flipkart" || p?.adapter === "amazon" || p?.adapter === "myntra" || p?.adapter === "ajio") &&
         p?.stockStatus?.blocked === true
       ) {
-        console.log("FLIPKART STOCK BLOCKED:", p.stockStatus);
+        console.log("STORE STOCK BLOCKED:", p.adapter, p.stockStatus);
         setPending(null);
         Alert.alert(
           "Selection unavailable",
           p.stockStatus.message ||
-            "Please select an available product variant on Flipkart."
+            "Please select an available product variant on the store page."
         );
         return;
       }
@@ -6259,7 +6575,7 @@ export default function Browser() {
      * sale.order.line.
      */
     const sizeMatch = options.match(
-      /Size:\s*(.*?)(?:\s+(?:-|ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·|\|)\s+Color:|$)/i,
+      /Size:\s*(.*?)(?:\s+(?:-|ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·|\|)\s+Color:|$)/i,
     );
 
     const colorMatch = options.match(/Color:\s*(.*)$/i);
@@ -6305,13 +6621,8 @@ export default function Browser() {
         {/* Browser header with back navigation, store name, and cart access. */}
         <View style={st.bar}>
           <TouchableOpacity
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/");
-              }
-            }}
+            activeOpacity={0.8}
+            onPress={() => router.replace("/")}
             style={st.barBtn}
           >
             <Text style={st.barBtnTxt}>{"< Back"}</Text>
@@ -6341,7 +6652,9 @@ export default function Browser() {
           ref={webRef}
           style={st.web}
           source={{ uri: currentUrl }}
-          injectedJavaScript={`
+          injectedJavaScriptBeforeContentLoaded={MYNTRA_EARLY_GUARD_JS}
+          injectedJavaScript={`${MYNTRA_EARLY_GUARD_JS}
+
             ${INJECTED}
             if (location.hostname.toLowerCase().indexOf("amazon") >= 0) {
               ${AMAZON_ADAPTER_JS}
@@ -6351,11 +6664,27 @@ export default function Browser() {
               ${FLIPKART_ADAPTER_JS}
             }
 
+            if (location.hostname.toLowerCase().indexOf("myntra") >= 0) {
+              ${MYNTRA_ADAPTER_JS}
+            }
+
+            if (/(^|\.)ajio\.com$/i.test(location.hostname)) {
+              ${AJIO_ADAPTER_JS}
+            }
+
             true;
           `}
           onMessage={onMessage}
           onShouldStartLoadWithRequest={(req) => {
             const u = req.url.toLowerCase();
+
+            if (u.includes("myntra")) {
+              console.log("MYNTRA NAVIGATION:", {
+                url: req.url,
+                navigationType: req.navigationType,
+                isTopFrame: req.isTopFrame,
+              });
+            }
 
             const blockedStoreCartPage =
               u.includes("/checkout") ||
@@ -6396,7 +6725,21 @@ export default function Browser() {
 
             return true;
           }}
-          onLoadStart={() => {}}
+          onError={(event) => {
+            console.log(
+              "WEBVIEW ERROR:",
+              JSON.stringify(event.nativeEvent, null, 2)
+            );
+          }}
+          onHttpError={(event) => {
+            console.log(
+              "WEBVIEW HTTP ERROR:",
+              JSON.stringify(event.nativeEvent, null, 2)
+            );
+          }}
+          onLoadStart={(event) => {
+            console.log("WEBVIEW LOAD START:", event.nativeEvent.url);
+          }}
           onLoadEnd={() => {
             setTimeout(() => {
               if (isMountedRef.current) {
@@ -6408,7 +6751,7 @@ export default function Browser() {
             canWebGoBackRef.current = nav.canGoBack;
             activeWebUrlRef.current = nav.url;
 
-            webRef.current?.injectJavaScript(INJECTED);
+            // Initial page injection is handled by injectedJavaScript.
 
             const u = nav.url.toLowerCase();
 
@@ -6434,7 +6777,11 @@ export default function Browser() {
           thirdPartyCookiesEnabled
           javaScriptEnabled
           domStorageEnabled
-          cacheEnabled
+          // IOS_MYNT_CACHE_TEST_V1
+          cacheEnabled={
+            !(Platform.OS === "ios" &&
+              currentUrl.toLowerCase().includes("myntra.com"))
+          }
           allowsBackForwardNavigationGestures
           setSupportMultipleWindows={false}
         />
@@ -7031,3 +7378,4 @@ const makeStyles = (COLORS: any) =>
       fontWeight: "600",
     },
   });
+
