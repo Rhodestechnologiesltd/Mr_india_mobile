@@ -31,6 +31,8 @@ import { MYNTRA_ADAPTER_JS } from "../store-adapters/myntra";
 import { AJIO_ADAPTER_JS } from "../store-adapters/ajio";
 import { NYKAA_ADAPTER_JS } from "../store-adapters/nykaa";
 import { MEESHO_ADAPTER_JS } from "../store-adapters/meesho";
+import { IKEA_ADAPTER_JS } from "../store-adapters/ikea";
+import { FIRSTCRY_ADAPTER_JS } from "../store-adapters/firstcry";
 
 // JavaScript injected into each store page to extract product details and block store checkout actions.
 
@@ -6407,12 +6409,62 @@ export default function Browser() {
         );
       } else if (
         /(^|\.)meesho\.com$/i.test(location.hostname) &&
-        window.__miMeeshoAdapter &&
+        (window.__miMeeshoAdapter || (function () {
+          // MEESHO_ANDROID_ON_DEMAND_V1
+          // Initialize only when Shop via Mr India is pressed.
+          ${MEESHO_ADAPTER_JS}
+          return window.__miMeeshoAdapter;
+        })()) &&
         typeof window.__miMeeshoAdapter.scrape === "function"
       ) {
         window.ReactNativeWebView.postMessage(
           JSON.stringify(window.__miMeeshoAdapter.scrape())
         );
+      } else if (
+        /(^|\.)firstcry\.com$/i.test(location.hostname)
+      ) {
+        // FIRSTCRY_ON_DEMAND_V1
+        if (!window.__miFirstCryAdapter ||
+            window.__miFirstCryAdapter.version !== 1) {
+          ${FIRSTCRY_ADAPTER_JS}
+        }
+
+        if (
+          window.__miFirstCryAdapter &&
+          typeof window.__miFirstCryAdapter.scrape === "function"
+        ) {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify(window.__miFirstCryAdapter.scrape())
+          );
+        }
+      } else if (
+        /(^|\.)ikea\.com$/i.test(location.hostname)
+      ) {
+        // IKEA_ON_DEMAND_V2_1
+        if (!window.__miIkeaAdapter ||
+            window.__miIkeaAdapter.version !== 3) {
+          ${IKEA_ADAPTER_JS}
+        }
+
+        if (
+          window.__miIkeaAdapter &&
+          typeof window.__miIkeaAdapter.scrape === "function"
+        ) {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify(window.__miIkeaAdapter.scrape())
+          );
+        } else {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({
+              adapter: "ikea",
+              store: "IKEA",
+              inr: 0,
+              name: document.title || "IKEA Product",
+              link: location.href,
+              options: ""
+            })
+          );
+        }
       } else if (host.indexOf("meesho") >= 0) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           adapter: "meesho",
@@ -6526,6 +6578,16 @@ export default function Browser() {
         console.log(JSON.stringify(p.__ajioDebug, null, 2));
       }
 
+      if (p?.__firstcryDebug) {
+        console.log("========== FIRSTCRY DEBUG ==========");
+        console.log(JSON.stringify(p.__firstcryDebug, null, 2));
+      }
+
+      if (p?.__ikeaDebug) {
+        console.log("========== IKEA DEBUG ==========");
+        console.log(JSON.stringify(p.__ikeaDebug, null, 2));
+      }
+
       if (p?.__meeshoDebug) {
         console.log("========== MEESHO DEBUG ==========");
         console.log(JSON.stringify(p.__meeshoDebug, null, 2));
@@ -6560,7 +6622,7 @@ export default function Browser() {
       }
 
       if (
-        (p?.adapter === "flipkart" || p?.adapter === "amazon" || p?.adapter === "myntra" || p?.adapter === "ajio" || p?.adapter === "nykaa" || p?.adapter === "meesho") &&
+        (p?.adapter === "flipkart" || p?.adapter === "amazon" || p?.adapter === "myntra" || p?.adapter === "ajio" || p?.adapter === "nykaa" || p?.adapter === "meesho" || p?.adapter === "ikea") &&
         p?.stockStatus?.blocked === true
       ) {
         console.log("STORE STOCK BLOCKED:", p.adapter, p.stockStatus);
@@ -6748,6 +6810,9 @@ export default function Browser() {
             if (/(^|\.)nykaa\.com$/i.test(location.hostname)) {
               ${NYKAA_ADAPTER_JS}
             }
+
+            // IKEA_ADAPTER_INJECTION_V1
+            ${IKEA_ADAPTER_JS}
 
             // MEESHO_PHASE2_IOS_REENABLE_V1
             // Restore product adapter on iOS only.

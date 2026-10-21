@@ -580,17 +580,167 @@ export const MYNTRA_ADAPTER_JS = String.raw`
 
     return result;
   }
+  /*
+   * MYNTRA_IDENTITY_V3_SAFE
+   * Fix mobile product title, image and placeholder shade.
+   * Price, size and stock functions remain unchanged.
+   */
+  function myntraIdentityV3() {
+    var result = {
+      name: "",
+      image: "",
+      nameSource: "not-found",
+      imageSource: "not-found"
+    };
+
+    var brand = txt("h1") || txt(".pdp-title");
+
+    function validName(value) {
+      value = clean(value);
+      if (value.length < 15 || value.length > 230) return false;
+      if (/ratings?|reviews?|wishlist|download now|myncash|coupon|view similar|add to bag/i.test(value)) return false;
+      if (/^(MRP|product details|size|colour|color|shade)/i.test(value)) return false;
+      if (/₹/.test(value)) return false;
+      return /[A-Za-z]{3,}/.test(value);
+    }
+
+    function setName(value, source) {
+      value = clean(value);
+      if (!validName(value)) return false;
+      result.name = value;
+      result.nameSource = source;
+      return true;
+    }
+
+    var description = txt(".pdp-name");
+
+    if (description) {
+      setName(
+        clean(brand + " " + description),
+        "desktop-product-title"
+      );
+    }
+
+    var lines = String(
+      document.body ? document.body.innerText || "" : ""
+    ).split(/\r?\n/).map(clean).filter(Boolean);
+
+    if (!result.name && brand) {
+      for (var i = 0; i < Math.min(lines.length, 28); i++) {
+        var line = lines[i];
+
+        if (
+          line.toLowerCase().indexOf(brand.toLowerCase()) === 0 &&
+          line.length > brand.length + 12
+        ) {
+          if (setName(line, "mobile-brand-product-line")) break;
+        }
+
+        if (line.toLowerCase() === brand.toLowerCase()) {
+          for (
+            var j = i + 1;
+            j < Math.min(lines.length, i + 4);
+            j++
+          ) {
+            if (setName(
+              clean(brand + " " + lines[j]),
+              "mobile-near-brand"
+            )) break;
+          }
+
+          if (result.name) break;
+        }
+      }
+    }
+
+    if (!result.name) {
+      for (var k = 0; k < lines.length - 1; k++) {
+        if (/^Product Details$/i.test(lines[k])) {
+          if (setName(lines[k + 1], "product-details")) break;
+        }
+      }
+    }
+
+    if (!result.name) {
+      var title = clean(getTitle());
+      setName(title, "legacy-title");
+    }
+
+    // Prioritize sufficiently large product photographs.
+    var images = document.querySelectorAll("img");
+    var bestScore = -Infinity;
+
+    for (var n = 0; n < images.length; n++) {
+      var img = images[n];
+      if (!visible(img)) continue;
+
+      var src = clean(
+        img.currentSrc ||
+        img.getAttribute("src") ||
+        img.getAttribute("data-src") ||
+        ""
+      );
+
+      if (!/^https?:\/\//i.test(src)) continue;
+      if (!/assets\.myntassets\.com/i.test(src)) continue;
+      if (/logo|mexpress|sprite|placeholder/i.test(src)) continue;
+
+      var rect = img.getBoundingClientRect();
+      if (rect.width < 150 || rect.height < 180) continue;
+
+      var score = Math.min(rect.width, 600) +
+                  Math.min(rect.height, 800);
+
+      if (rect.height > rect.width) score += 150;
+
+      // Give priority to pictures near the active product header.
+      score -= Math.abs(rect.top - 130) / 8;
+
+      if (score > bestScore) {
+        bestScore = score;
+        result.image = src;
+        result.imageSource = "visible-product-photo";
+      }
+    }
+
+    if (!result.image) {
+      var fallback = getImage();
+      if (/^https?:\/\//i.test(fallback)) {
+        result.image = fallback;
+        result.imageSource = "legacy-image";
+      }
+    }
+
+    return result;
+  }
+
+  function myntraRealShadeV3(value) {
+    value = clean(value);
+    if (/^(shade name|shade|color|colour|select shade|select color|select colour)$/i.test(value)) {
+      return "";
+    }
+    return value;
+  }
   function scrape() {
     var details = getPriceDetails();
-    var variants = getVariants();
     var mobile = getMobileMyntraDetails();
-    var variants = getVariants();
+    var identity = myntraIdentityV3();
+    mobile.color = myntraRealShadeV3(mobile.color);
+    var variants = getVariants().filter(function(v) {
+      return !/^colou?r$/i.test(v.name) ||
+        !!myntraRealShadeV3(v.value);
+    });
     if (mobile.color) {
       variants = variants.filter(function(v) {
         return !/^colou?r$/i.test(v.name);
       });
       variants.push({ name: "Color", value: mobile.color });
     }
+    variants = variants.filter(function(v) {
+      return !/^colou?r$/i.test(v.name) ||
+        !!myntraRealShadeV3(v.value);
+    });
+
     if (mobile.size) {
       variants = variants.filter(function(v) {
         return !/^size$/i.test(v.name);
@@ -602,16 +752,16 @@ export const MYNTRA_ADAPTER_JS = String.raw`
       adapter: "myntra",
       store: "Myntra",
       isProductPage: isProductPage(),
-      name: mobile.title || getTitle(),
+      name: identity.name || mobile.title || getTitle(),
       inr: details.price > 0 ? details.price : mobile.price,
-      image: mobile.image || "",
+      image: identity.image || "",
       link: String(location.href || "").split("#")[0],
       variants: variants,
       options: variants.map(function (v) {
         return v.name + ": " + v.value;
       }).join(" | "),
       size: mobile.size || getSelectedSize(),
-      color: mobile.color || getSelectedColor(),
+      color: mobile.color || myntraRealShadeV3(getSelectedColor()),
       stockStatus: (function () {
         var stock = getStockStatus();
         if (
@@ -633,7 +783,8 @@ export const MYNTRA_ADAPTER_JS = String.raw`
         mobileTitle: mobile.title,
         mobileSize: mobile.size,
         mobileColor: mobile.color,
-        mobileImageFound: !!mobile.image,
+        mobileImageFound: !!identity.image,
+        identityV3: identity,
         mobileDomProbe: (function () {
           var body = String(
             document.body ? document.body.innerText || "" : ""

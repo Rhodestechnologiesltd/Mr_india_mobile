@@ -266,6 +266,7 @@ export const AJIO_ADAPTER_JS = String.raw`
     return "";
   }
   // AJIO_V8_VARIANT_SELECTION
+  // AJIO_OS_SIZE_FIX_V1 - Recognize selected OS / One Size tiles.
   function sizeValue(v) {
     v = clean(v);
     if (!v || v.length > 45) return "";
@@ -273,7 +274,7 @@ export const AJIO_ADAPTER_JS = String.raw`
     var upper = v.toUpperCase();
 
     // Clothing sizes, including extended plus sizes.
-    if (/^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL|[2-9]XL|10XL|FREE|FREE SIZE|ONE SIZE)$/i.test(upper)) {
+    if (/^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL|[2-9]XL|10XL|OS|ONE SIZE|FREE|FREE SIZE)$/i.test(upper)) {
       return upper;
     }
 

@@ -13,7 +13,7 @@ const ODOO_DB = "dh_mr_india_test";
 const MOBIKUL_API_KEY = "45e2-b0f2-130c30a696b3";
 
 //Local Host
-// export const API_BASE = "http://192.168.100.205:8067";
+//export const API_BASE = "http://192.168.100.205:8067";
 // const ODOO_DB = "dh_mr_india_test_2026-08-19_06";
 // const MOBIKUL_API_KEY = "dummySecretKey";
 
@@ -186,16 +186,16 @@ export const STORES: Store[] = [
     colors: ["#FC2779", "#B81E5B"],
     tagline: "Beauty & cosmetics",
   },
-  {
-    id: "meesho",
-    name: "Meesho",
-    emoji: "ÃƒÂ°Ã…Â¸Ã‚ÂÃ‚Â·",
-    logo: require("../../assets/images/logos/meesho.png"),
-    url: "https://www.meesho.com/",
-    cat: "Fashion",
-    colors: ["#9B1C8E", "#6E1465"],
-    tagline: "Value finds",
-  },
+  // {
+  //   id: "meesho",
+  //   name: "Meesho",
+  //   emoji: "ÃƒÂ°Ã…Â¸Ã‚ÂÃ‚Â·",
+  //   logo: require("../../assets/images/logos/meesho.png"),
+  //   url: "https://www.meesho.com/",
+  //   cat: "Fashion",
+  //   colors: ["#9B1C8E", "#6E1465"],
+  //   tagline: "Value finds",
+  // },
 
   // {
   //   id: "boat",

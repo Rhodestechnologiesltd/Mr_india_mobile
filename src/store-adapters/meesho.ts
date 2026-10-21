@@ -95,6 +95,60 @@ export const MEESHO_ADAPTER_JS = String.raw`
     return best;
   }
 
+  /*
+   * MEESHO_LIVE_SELLING_PRICE_V4
+   *
+   * Read the main product price directly.
+   * Exclude special offers, coupons and promotional prices.
+   * Do not use product recommendations or seller statistics.
+   */
+  function meeshoLivePrice() {
+    if (!isProductPage()) {
+      return { value: 0, source: "not-product" };
+    }
+
+    var selectors = [
+      "[class*='ShippingInfoMobilestyles__PriceRow']",
+      "[class*='ShippingInfoMobilestyles__PriceContainer']",
+      "[class*='ShippingInfoMobile'][class*='Price']"
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+      var nodes = document.querySelectorAll(selectors[i]);
+
+      for (var j = 0; j < nodes.length && j < 15; j++) {
+        var el = nodes[j];
+
+        if (!visible(el)) continue;
+
+        var value = clean(el.innerText || el.textContent);
+
+        if (!value || value.length > 100) continue;
+
+        if (/special offer|coupon|cashback|with \d+ offer|bank offer|download/i.test(value)) {
+          continue;
+        }
+
+        var match = value.match(/₹\s*([\d,]+(?:\.\d{1,2})?)/);
+
+        if (!match) continue;
+
+        var price = Number(match[1].replace(/,/g, ""));
+
+        if (isFinite(price) && price > 0) {
+          return {
+            value: price,
+            source: selectors[i]
+          };
+        }
+      }
+    }
+
+    return {
+      value: 0,
+      source: "live-price-not-found"
+    };
+  }
   function priceProbe() {
     var raw = String(
       document.body ? document.body.innerText || "" : ""
@@ -514,7 +568,8 @@ export const MEESHO_ADAPTER_JS = String.raw`
       }
     }
 
-    var price = Number(legacy.inr || 0);
+    var livePrice = meeshoLivePrice();
+    var price = livePrice.value;
     if (!isFinite(price) || price <= 0) price = 0;
 
     var title = clean(legacy.name || getTitle());
@@ -557,7 +612,7 @@ export const MEESHO_ADAPTER_JS = String.raw`
       __meeshoDebug: {
         version: 3,
         productPage: isProductPage(),
-        priceSource: "legacy-browser-baseline",
+        priceSource: livePrice.source,
         extractedPrice: price,
         title: title,
         image: image,
