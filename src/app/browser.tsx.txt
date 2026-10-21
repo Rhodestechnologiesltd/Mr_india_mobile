@@ -29,6 +29,8 @@ import { AMAZON_ADAPTER_JS } from "../store-adapters/amazon";
 import { FLIPKART_ADAPTER_JS } from "../store-adapters/flipkart";
 import { MYNTRA_ADAPTER_JS } from "../store-adapters/myntra";
 import { AJIO_ADAPTER_JS } from "../store-adapters/ajio";
+import { NYKAA_ADAPTER_JS } from "../store-adapters/nykaa";
+import { MEESHO_ADAPTER_JS } from "../store-adapters/meesho";
 
 // JavaScript injected into each store page to extract product details and block store checkout actions.
 
@@ -6144,6 +6146,18 @@ export default function Browser() {
   const COLORS = getColors(scheme === "dark");
   const st = makeStyles(COLORS);
 
+  // MEESHO_PHASE1_NAVIGATION_V1
+  // Scope loading and header navigation to Meesho only.
+  const isMeeshoStore = /(^|\.)meesho\.com$/i.test(
+    (() => {
+      try {
+        return new URL(String(url || "")).hostname;
+      } catch {
+        return "";
+      }
+    })()
+  );
+
   // Access shared cart actions and keep references used by the embedded browser.
   const { addToCart, cartCount } = useStore();
   const webRef = useRef<WebView>(null);
@@ -6233,12 +6247,13 @@ export default function Browser() {
     activeWebUrlRef.current = nextStoreHome;
     canWebGoBackRef.current = false;
 
-    setInitialLoading(true);
+    // Meesho uses the website's own loading experience.
+    setInitialLoading(!isMeeshoStore);
     setPending(null);
     setCurrentUrl(nextStoreHome);
     setShowGuide(true);
     setIsStoreCartPage(false);
-  }, [url]);
+  }, [url, isMeeshoStore]);
 
   // Android hardware Back navigates inside the current store first.
   // It must not accidentally exit the browser back to Mr India.
@@ -6382,6 +6397,44 @@ export default function Browser() {
         window.ReactNativeWebView.postMessage(
           JSON.stringify(window.__miAjioAdapter.scrape())
         );
+      } else if (
+        /(^|\.)nykaa\.com$/i.test(location.hostname) &&
+        window.__miNykaaAdapter &&
+        typeof window.__miNykaaAdapter.scrape === "function"
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miNykaaAdapter.scrape())
+        );
+      } else if (
+        /(^|\.)meesho\.com$/i.test(location.hostname) &&
+        window.__miMeeshoAdapter &&
+        typeof window.__miMeeshoAdapter.scrape === "function"
+      ) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify(window.__miMeeshoAdapter.scrape())
+        );
+      } else if (host.indexOf("meesho") >= 0) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          adapter: "meesho",
+          store: "Meesho",
+          inr: 0,
+          stockStatus: {
+            blocked: true,
+            reason: "adapter-unavailable",
+            message: "Meesho product details are not ready. Please wait and try again."
+          }
+        }));
+      } else if (host.indexOf("nykaa") >= 0) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          adapter: "nykaa",
+          store: "Nykaa",
+          inr: 0,
+          stockStatus: {
+            blocked: true,
+            reason: "adapter-unavailable",
+            message: "Nykaa product details are not ready. Please wait and try again."
+          }
+        }));
       } else if (host.indexOf("ajio") >= 0) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           adapter: "ajio",
@@ -6473,6 +6526,16 @@ export default function Browser() {
         console.log(JSON.stringify(p.__ajioDebug, null, 2));
       }
 
+      if (p?.__meeshoDebug) {
+        console.log("========== MEESHO DEBUG ==========");
+        console.log(JSON.stringify(p.__meeshoDebug, null, 2));
+      }
+
+      if (p?.__nykaaDebug) {
+        console.log("========== NYKAA DEBUG ==========");
+        console.log(JSON.stringify(p.__nykaaDebug, null, 2));
+      }
+
       if (p?.__flipkartDebug) {
         console.log("========== FLIPKART PRICE DEBUG ==========");
         console.log(JSON.stringify(p.__flipkartDebug, null, 2));
@@ -6497,7 +6560,7 @@ export default function Browser() {
       }
 
       if (
-        (p?.adapter === "flipkart" || p?.adapter === "amazon" || p?.adapter === "myntra" || p?.adapter === "ajio") &&
+        (p?.adapter === "flipkart" || p?.adapter === "amazon" || p?.adapter === "myntra" || p?.adapter === "ajio" || p?.adapter === "nykaa" || p?.adapter === "meesho") &&
         p?.stockStatus?.blocked === true
       ) {
         console.log("STORE STOCK BLOCKED:", p.adapter, p.stockStatus);
@@ -6622,7 +6685,16 @@ export default function Browser() {
         <View style={st.bar}>
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={() => router.replace("/")}
+            onPress={() => {
+              // Meesho: navigate to the previous website page.
+              // Other stores retain their original header behaviour.
+              if (isMeeshoStore && canWebGoBackRef.current) {
+                webRef.current?.goBack();
+                return;
+              }
+
+              router.replace("/");
+            }}
             style={st.barBtn}
           >
             <Text style={st.barBtnTxt}>{"< Back"}</Text>
@@ -6652,8 +6724,9 @@ export default function Browser() {
           ref={webRef}
           style={st.web}
           source={{ uri: currentUrl }}
-          injectedJavaScriptBeforeContentLoaded={MYNTRA_EARLY_GUARD_JS}
-          injectedJavaScript={`${MYNTRA_EARLY_GUARD_JS}
+          // MEESHO_ANDROID_NO_INJECTION_TEST_V1
+          injectedJavaScriptBeforeContentLoaded={Platform.OS === "android" && isMeeshoStore ? "" : MYNTRA_EARLY_GUARD_JS}
+          injectedJavaScript={Platform.OS === "android" && isMeeshoStore ? "" : `${MYNTRA_EARLY_GUARD_JS}
 
             ${INJECTED}
             if (location.hostname.toLowerCase().indexOf("amazon") >= 0) {
@@ -6671,6 +6744,15 @@ export default function Browser() {
             if (/(^|\.)ajio\.com$/i.test(location.hostname)) {
               ${AJIO_ADAPTER_JS}
             }
+
+            if (/(^|\.)nykaa\.com$/i.test(location.hostname)) {
+              ${NYKAA_ADAPTER_JS}
+            }
+
+            // MEESHO_PHASE2_IOS_REENABLE_V1
+            // Restore product adapter on iOS only.
+            // Android remains unchanged during diagnosis.
+            ${Platform.OS === "ios" ? MEESHO_ADAPTER_JS : ""}
 
             true;
           `}
@@ -6773,6 +6855,7 @@ export default function Browser() {
             }
           }}
           startInLoadingState={false}
+
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           javaScriptEnabled
